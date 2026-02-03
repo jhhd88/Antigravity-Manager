@@ -65,7 +65,11 @@ pub fn run() {
     if let Err(e) = modules::security_db::init_db() {
         error!("Failed to initialize security database: {}", e);
     }
-
+    
+    // Initialize user token database
+    if let Err(e) = modules::user_token_db::init_db() {
+        error!("Failed to initialize user token database: {}", e);
+    }
 
     if is_headless {
         info!("Starting in HEADLESS mode...");
@@ -431,6 +435,14 @@ pub fn run() {
             modules::log_bridge::is_debug_console_enabled,
             modules::log_bridge::get_debug_console_logs,
             modules::log_bridge::clear_debug_console_logs,
+            // User Token commands
+            commands::user_token::list_user_tokens,
+            commands::user_token::create_user_token,
+            commands::user_token::update_user_token,
+            commands::user_token::delete_user_token,
+            commands::user_token::renew_user_token,
+            commands::user_token::get_token_ip_bindings,
+            commands::user_token::get_user_token_summary,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

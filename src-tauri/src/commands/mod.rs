@@ -11,6 +11,8 @@ pub mod autostart;
 pub mod cloudflared;
 // 导出 security 命令 (IP 监控)
 pub mod security;
+// 导出 user_token 命令
+pub mod user_token;
 
 /// 列出所有账号
 #[tauri::command]

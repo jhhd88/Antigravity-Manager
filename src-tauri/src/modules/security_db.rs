@@ -19,6 +19,8 @@ pub struct IpAccessLog {
     pub api_key_hash: Option<String>,
     pub blocked: bool,
     pub block_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
 }
 
 /// IP 黑名单条目
@@ -162,6 +164,9 @@ pub fn init_db() -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
+    // Migration: Add username column to ip_access_logs
+    let _ = conn.execute("ALTER TABLE ip_access_logs ADD COLUMN username TEXT", []);
+
     Ok(())
 }
 
@@ -174,8 +179,8 @@ pub fn save_ip_access_log(log: &IpAccessLog) -> Result<(), String> {
     let conn = connect_db()?;
 
     conn.execute(
-        "INSERT INTO ip_access_logs (id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        "INSERT INTO ip_access_logs (id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason, username)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             log.id,
             log.client_ip,
@@ -188,6 +193,7 @@ pub fn save_ip_access_log(log: &IpAccessLog) -> Result<(), String> {
             log.api_key_hash,
             log.blocked,
             log.block_reason,
+            log.username,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -207,7 +213,7 @@ pub fn get_ip_access_logs(
     let sql = if blocked_only {
         if let Some(ip) = ip_filter {
             format!(
-                "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason
+                "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason, username
                  FROM ip_access_logs
                  WHERE blocked = 1 AND client_ip LIKE '%{}%'
                  ORDER BY timestamp DESC
@@ -216,7 +222,7 @@ pub fn get_ip_access_logs(
             )
         } else {
             format!(
-                "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason
+                "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason, username
                  FROM ip_access_logs
                  WHERE blocked = 1
                  ORDER BY timestamp DESC
@@ -226,7 +232,7 @@ pub fn get_ip_access_logs(
         }
     } else if let Some(ip) = ip_filter {
         format!(
-            "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason
+            "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason, username
              FROM ip_access_logs
              WHERE client_ip LIKE '%{}%'
              ORDER BY timestamp DESC
@@ -235,7 +241,7 @@ pub fn get_ip_access_logs(
         )
     } else {
         format!(
-            "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason
+            "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason, username
              FROM ip_access_logs
              ORDER BY timestamp DESC
              LIMIT {} OFFSET {}",
@@ -259,6 +265,7 @@ pub fn get_ip_access_logs(
                 api_key_hash: row.get(8)?,
                 blocked: row.get::<_, i32>(9)? != 0,
                 block_reason: row.get(10)?,
+                username: row.get(11).unwrap_or(None),
             })
         })
         .map_err(|e| e.to_string())?;

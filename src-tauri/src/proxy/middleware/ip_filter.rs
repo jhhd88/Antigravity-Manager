@@ -113,6 +113,7 @@ pub async fn ip_filter_middleware(
                         api_key_hash: None,
                         blocked: true,
                         block_reason: Some(format!("IP in blacklist: {}", reason)),
+                        username: None,
                     };
                     
                     tokio::spawn(async move {

@@ -256,6 +256,8 @@ print(response.choices[0].message.content)
 
 *   **Changelog**:
     *   **v4.1.10 (2026-02-08)**:
+        -   **[Core Feature] Expand CLI Detection Paths to Support Volta (PR #1695)**:
+            -   **Path Enhancement**: Added automatic detection support for `.volta/bin` and its internal binaries in both `cli_sync` and `opencode_sync`, ensuring a "zero-config" experience for Volta users when syncing CLI configurations.
         -   **[Core Fix] Smart Resolution Protection for Image Generation (Issue #1694)**:
             -   **Priority Logic**: Refactored the image configuration merging algorithm to prioritize high-resolution settings from model suffixes (e.g., `-4k`, `-2k`) or explicit parameters (`quality: "hd"`). This prevents accidental downgrades caused by default parameters in the request body.
             -   **Capability Boost**: Supports concurrent high-resolution image generation and full Thinking process display.

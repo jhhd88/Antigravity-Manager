@@ -97,7 +97,7 @@ mod tests {
         
         write_corrupted_index(dir.path(), &content);
 
-        let result = load_account_index_in_dir(dir.path());
+        let result = load_account_index_in_dir(dir.path(), false);
         
         // New behavior: BOM is stripped and JSON parses successfully
         assert!(result.is_ok(), "BOM should be stripped and JSON should parse: {:?}", result);
@@ -120,7 +120,7 @@ mod tests {
         
         write_corrupted_index(dir.path(), &content);
 
-        let result = load_account_index_in_dir(dir.path());
+        let result = load_account_index_in_dir(dir.path(), false);
         
         // New behavior: NUL bytes are stripped and JSON parses successfully
         assert!(result.is_ok(), "NUL prefix should be stripped and JSON should parse: {:?}", result);
@@ -137,7 +137,7 @@ mod tests {
         // Non-JSON garbage content - should trigger recovery
         write_corrupted_index(dir.path(), b"\0\0not json");
 
-        let result = load_account_index_in_dir(dir.path());
+        let result = load_account_index_in_dir(dir.path(), false);
         
         // New behavior: garbage content triggers recovery, returns empty index
         assert!(result.is_ok(), "Garbage content should trigger recovery and return Ok: {:?}", result);
@@ -154,7 +154,7 @@ mod tests {
         // Empty file
         write_corrupted_index(dir.path(), b"");
 
-        let result = load_account_index_in_dir(dir.path());
+        let result = load_account_index_in_dir(dir.path(), false);
         
         // Current behavior: empty file returns new empty index
         assert!(result.is_ok());
@@ -170,7 +170,7 @@ mod tests {
         // Whitespace-only file
         write_corrupted_index(dir.path(), b"   \n\t  ");
 
-        let result = load_account_index_in_dir(dir.path());
+        let result = load_account_index_in_dir(dir.path(), false);
         
         // Current behavior: whitespace-only file returns new empty index
         assert!(result.is_ok());
@@ -192,7 +192,7 @@ mod tests {
         assert!(!index_path.exists());
 
         // Load account index - should recover from accounts directory
-        let result = load_account_index_in_dir(dir.path());
+        let result = load_account_index_in_dir(dir.path(), false);
         assert!(result.is_ok(), "Should recover from accounts directory");
         let index = result.unwrap();
         assert_eq!(index.accounts.len(), 2, "Index should have 2 accounts recovered from accounts directory");
@@ -252,7 +252,7 @@ mod tests {
         save_account_index_in_dir(dir.path(), &index).expect("Failed to save account index");
 
         // Load it back
-        let loaded = load_account_index_in_dir(dir.path()).expect("Failed to load account index");
+        let loaded = load_account_index_in_dir(dir.path(), false).expect("Failed to load account index");
 
         // Assert it matches
         assert_eq!(loaded.accounts.len(), 2, "Should have 2 accounts");
@@ -292,7 +292,7 @@ mod tests {
         assert!(index_path.exists(), "accounts.json should exist");
 
         // Call load_account_index to trigger recovery and backup creation
-        let recovered = load_account_index_in_dir(dir.path()).expect("Should recover from accounts");
+        let recovered = load_account_index_in_dir(dir.path(), false).expect("Should recover from accounts");
         assert_eq!(recovered.accounts.len(), 1, "Should recover 1 account");
         assert_eq!(recovered.accounts[0].email, "recovered@example.com");
         assert_eq!(recovered.current_account_id, Some("recovered-acc".to_string()));
@@ -364,8 +364,10 @@ pub fn get_accounts_dir() -> Result<PathBuf, String> {
     Ok(accounts_dir)
 }
 
-/// Load account index from a specific directory (internal helper)
-fn load_account_index_in_dir(data_dir: &PathBuf) -> Result<AccountIndex, String> {
+/// Load account index from a specific directory (internal helper).
+/// When `caller_holds_lock` is true, the caller already holds ACCOUNT_INDEX_LOCK
+/// and the recovery path will skip try_lock to avoid deadlock.
+fn load_account_index_in_dir(data_dir: &PathBuf, caller_holds_lock: bool) -> Result<AccountIndex, String> {
     let index_path = data_dir.join(ACCOUNTS_INDEX);
 
     if !index_path.exists() {
@@ -373,7 +375,7 @@ fn load_account_index_in_dir(data_dir: &PathBuf) -> Result<AccountIndex, String>
             "Account index file not found, attempting recovery from accounts directory",
         );
         let recovered = rebuild_index_from_accounts_in_dir(data_dir)?;
-        try_save_recovered_index(data_dir, &index_path, &recovered, None)?;
+        try_save_recovered_index(data_dir, &index_path, &recovered, None, caller_holds_lock)?;
         return Ok(recovered);
     }
 
@@ -386,12 +388,24 @@ fn load_account_index_in_dir(data_dir: &PathBuf) -> Result<AccountIndex, String>
             "Account index is empty, attempting recovery from accounts directory",
         );
         let recovered = rebuild_index_from_accounts_in_dir(data_dir)?;
-        try_save_recovered_index(data_dir, &index_path, &recovered, None)?;
+        try_save_recovered_index(data_dir, &index_path, &recovered, None, caller_holds_lock)?;
         return Ok(recovered);
     }
 
     // Sanitize content: strip BOM and leading NUL bytes
-    let sanitized = sanitize_index_content(&raw_content);
+    // If UTF-8 validation fails, treat file as fully corrupted and trigger recovery
+    let sanitized = match sanitize_index_content(&raw_content) {
+        Ok(s) => s,
+        Err(utf8_err) => {
+            crate::modules::logger::log_error(&format!(
+                "Account index file contains invalid UTF-8: {}. Treating as corrupted, attempting recovery.",
+                utf8_err
+            ));
+            let recovered = rebuild_index_from_accounts_in_dir(data_dir)?;
+            try_save_recovered_index(data_dir, &index_path, &recovered, Some(&raw_content), caller_holds_lock)?;
+            return Ok(recovered);
+        }
+    };
 
     // If sanitized content is empty/whitespace, attempt recovery
     if sanitized.trim().is_empty() {
@@ -399,7 +413,7 @@ fn load_account_index_in_dir(data_dir: &PathBuf) -> Result<AccountIndex, String>
             "Account index is empty after sanitization, attempting recovery from accounts directory",
         );
         let recovered = rebuild_index_from_accounts_in_dir(data_dir)?;
-        try_save_recovered_index(data_dir, &index_path, &recovered, None)?;
+        try_save_recovered_index(data_dir, &index_path, &recovered, None, caller_holds_lock)?;
         return Ok(recovered);
     }
 
@@ -418,7 +432,7 @@ fn load_account_index_in_dir(data_dir: &PathBuf) -> Result<AccountIndex, String>
                 parse_err
             ));
             let recovered = rebuild_index_from_accounts_in_dir(data_dir)?;
-            try_save_recovered_index(data_dir, &index_path, &recovered, Some(&raw_content))?;
+            try_save_recovered_index(data_dir, &index_path, &recovered, Some(&raw_content), caller_holds_lock)?;
             Ok(recovered)
         }
     }
@@ -519,11 +533,19 @@ fn load_account_at_path(account_path: &PathBuf) -> Result<Account, String> {
 /// Load account index with recovery support
 pub fn load_account_index() -> Result<AccountIndex, String> {
     let data_dir = get_data_dir()?;
-    load_account_index_in_dir(&data_dir)
+    load_account_index_in_dir(&data_dir, false)
 }
 
-/// Sanitize index file content by stripping BOM and leading NUL bytes
-fn sanitize_index_content(raw: &[u8]) -> String {
+/// Load account index when the caller already holds ACCOUNT_INDEX_LOCK.
+/// This avoids deadlock in try_save_recovered_index by skipping try_lock().
+fn load_account_index_locked() -> Result<AccountIndex, String> {
+    let data_dir = get_data_dir()?;
+    load_account_index_in_dir(&data_dir, true)
+}
+
+/// Sanitize index file content by stripping BOM and leading NUL bytes.
+/// Returns an error if the remaining bytes are not valid UTF-8 (indicating corruption).
+fn sanitize_index_content(raw: &[u8]) -> Result<String, String> {
     // Skip UTF-8 BOM if present
     let without_bom = if raw.starts_with(&[0xEF, 0xBB, 0xBF]) {
         &raw[3..]
@@ -532,22 +554,31 @@ fn sanitize_index_content(raw: &[u8]) -> String {
     };
 
     // Skip leading NUL bytes
-    let without_nul = without_bom
+    let without_nul: Vec<u8> = without_bom
         .iter()
         .skip_while(|&&b| b == 0x00)
         .copied()
-        .collect::<Vec<u8>>();
+        .collect();
 
-    // Convert to string (lossy - invalid UTF-8 sequences become replacement chars)
-    String::from_utf8_lossy(&without_nul).into_owned()
+    // Strict UTF-8 conversion: invalid sequences indicate file corruption
+    String::from_utf8(without_nul).map_err(|e| {
+        format!(
+            "index file contains invalid UTF-8 at byte offset {}: {}",
+            e.utf8_error().valid_up_to(),
+            e.utf8_error()
+        )
+    })
 }
 
-/// Best-effort save of recovered index without deadlocking
+/// Best-effort save of recovered index without deadlocking.
+/// When `caller_holds_lock` is true, skip the `try_lock()` call and directly save
+/// (the caller already holds ACCOUNT_INDEX_LOCK).
 fn try_save_recovered_index(
     data_dir: &PathBuf,
     _index_path: &PathBuf,
     index: &AccountIndex,
     corrupt_content: Option<&[u8]>,
+    caller_holds_lock: bool,
 ) -> Result<(), String> {
     // Backup corrupt file if content provided
     if let Some(content) = corrupt_content {
@@ -565,28 +596,82 @@ fn try_save_recovered_index(
                 backup_name
             ));
         }
+
+        // Rotate backup files: keep the 5 most recent, delete the rest
+        cleanup_corrupt_backups(data_dir, 5);
     }
 
-    // Try to acquire lock without blocking - if we can't get it, skip saving
-    match ACCOUNT_INDEX_LOCK.try_lock() {
-        Ok(_guard) => {
-            if let Err(e) = save_account_index_in_dir(data_dir, index) {
-                crate::modules::logger::log_warn(&format!(
-                    "Failed to save recovered index: {}. Will retry on next load.",
-                    e
-                ));
-            } else {
-                crate::modules::logger::log_info("Successfully saved recovered index");
-            }
+    if caller_holds_lock {
+        // Caller already holds the lock, save directly
+        if let Err(e) = save_account_index_in_dir(data_dir, index) {
+            crate::modules::logger::log_warn(&format!(
+                "Failed to save recovered index: {}. Will retry on next load.",
+                e
+            ));
+        } else {
+            crate::modules::logger::log_info("Successfully saved recovered index");
         }
-        Err(_) => {
-            crate::modules::logger::log_warn(
-                "Could not acquire lock to save recovered index. Will retry on next load."
-            );
+    } else {
+        // Try to acquire lock without blocking - if we can't get it, skip saving
+        match ACCOUNT_INDEX_LOCK.try_lock() {
+            Ok(_guard) => {
+                if let Err(e) = save_account_index_in_dir(data_dir, index) {
+                    crate::modules::logger::log_warn(&format!(
+                        "Failed to save recovered index: {}. Will retry on next load.",
+                        e
+                    ));
+                } else {
+                    crate::modules::logger::log_info("Successfully saved recovered index");
+                }
+            }
+            Err(_) => {
+                crate::modules::logger::log_warn(
+                    "Could not acquire lock to save recovered index. Will retry on next load."
+                );
+            }
         }
     }
 
     Ok(())
+}
+
+/// Remove old `.corrupt-*` backup files, keeping only the `keep` most recent by modification time.
+fn cleanup_corrupt_backups(data_dir: &PathBuf, keep: usize) {
+    let entries = match fs::read_dir(data_dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    let mut backups: Vec<(PathBuf, std::time::SystemTime)> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .map_or(false, |name| name.starts_with("accounts.json.corrupt-"))
+        })
+        .filter_map(|e| {
+            let modified = e.metadata().ok()?.modified().ok()?;
+            Some((e.path(), modified))
+        })
+        .collect();
+
+    if backups.len() <= keep {
+        return;
+    }
+
+    // Sort by modification time descending (newest first)
+    backups.sort_by(|a, b| b.1.cmp(&a.1));
+
+    // Delete everything after the first `keep` entries
+    for (path, _) in backups.iter().skip(keep) {
+        if let Err(e) = fs::remove_file(path) {
+            crate::modules::logger::log_warn(&format!(
+                "Failed to remove old corrupt backup {}: {}",
+                path.display(),
+                e
+            ));
+        }
+    }
 }
 
 /// Save account index (atomic write)
@@ -642,8 +727,42 @@ fn atomic_replace_file(src: &PathBuf, dst: &PathBuf) -> Result<(), String> {
     fs::rename(src, dst).map_err(|e| format!("rename failed: {}", e))
 }
 
+/// Validate that account_id is a valid UUID format (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+/// Uses manual validation to avoid regex dependency.
+fn validate_account_id(account_id: &str) -> Result<(), String> {
+    if account_id.len() != 36 {
+        return Err(format!(
+            "invalid_account_id: expected 36 chars, got {}",
+            account_id.len()
+        ));
+    }
+    let bytes = account_id.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        match i {
+            8 | 13 | 18 | 23 => {
+                if b != b'-' {
+                    return Err(format!(
+                        "invalid_account_id: expected '-' at position {}, got '{}'",
+                        i, b as char
+                    ));
+                }
+            }
+            _ => {
+                if !b.is_ascii_hexdigit() {
+                    return Err(format!(
+                        "invalid_account_id: non-hex char '{}' at position {}",
+                        b as char, i
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Load account data
 pub fn load_account(account_id: &str) -> Result<Account, String> {
+    validate_account_id(account_id)?;
     let accounts_dir = get_accounts_dir()?;
     let account_path = accounts_dir.join(format!("{}.json", account_id));
     load_account_at_path(&account_path)
@@ -651,6 +770,7 @@ pub fn load_account(account_id: &str) -> Result<Account, String> {
 
 /// Save account data
 pub fn save_account(account: &Account) -> Result<(), String> {
+    validate_account_id(&account.id)?;
     let accounts_dir = get_accounts_dir()?;
     let account_path = accounts_dir.join(format!("{}.json", account.id));
 
@@ -693,7 +813,7 @@ pub fn add_account(
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
-    let mut index = load_account_index()?;
+    let mut index = load_account_index_locked()?;
 
     // Check if account already exists
     if index.accounts.iter().any(|s| s.email == email) {
@@ -739,7 +859,7 @@ pub fn upsert_account(
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
-    let mut index = load_account_index()?;
+    let mut index = load_account_index_locked()?;
 
     // Find account ID if exists
     let existing_account_id = index
@@ -812,7 +932,7 @@ pub fn delete_account(account_id: &str) -> Result<(), String> {
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
-    let mut index = load_account_index()?;
+    let mut index = load_account_index_locked()?;
 
     // Remove from index
     let original_len = index.accounts.len();
@@ -849,7 +969,7 @@ pub fn delete_accounts(account_ids: &[String]) -> Result<(), String> {
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
-    let mut index = load_account_index()?;
+    let mut index = load_account_index_locked()?;
 
     let accounts_dir = get_accounts_dir()?;
 
@@ -886,7 +1006,7 @@ pub fn reorder_accounts(account_ids: &[String]) -> Result<(), String> {
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
-    let mut index = load_account_index()?;
+    let mut index = load_account_index_locked()?;
 
     // Create a map of account ID to summary
     let id_to_summary: std::collections::HashMap<_, _> = index
@@ -931,7 +1051,7 @@ pub async fn switch_account(
         let _lock = ACCOUNT_INDEX_LOCK
             .lock()
             .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
-        load_account_index()?
+        load_account_index_locked()?
     };
 
     // 1. Verify account exists
@@ -979,7 +1099,7 @@ pub async fn switch_account(
         let _lock = ACCOUNT_INDEX_LOCK
             .lock()
             .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
-        let mut index = load_account_index()?;
+        let mut index = load_account_index_locked()?;
         index.current_account_id = Some(account_id.to_string());
         save_account_index(&index)?;
     }
@@ -1179,7 +1299,7 @@ pub fn set_current_account_id(account_id: &str) -> Result<(), String> {
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
-    let mut index = load_account_index()?;
+    let mut index = load_account_index_locked()?;
     index.current_account_id = Some(account_id.to_string());
     save_account_index(&index)
 }
@@ -1258,7 +1378,7 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
         let _lock = ACCOUNT_INDEX_LOCK
             .lock()
             .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
-        if let Ok(mut index) = load_account_index() {
+        if let Ok(mut index) = load_account_index_locked() {
             if let Some(summary) = index.accounts.iter_mut().find(|a| a.id == account_id) {
                 summary.protected_models = account.protected_models.clone();
                 let _ = save_account_index(&index);
@@ -1300,7 +1420,7 @@ pub fn toggle_proxy_status(
     save_account(&account)?;
 
     // Also update index summary
-    let mut index = load_account_index()?;
+    let mut index = load_account_index_locked()?;
     if let Some(summary) = index.accounts.iter_mut().find(|a| a.id == account_id) {
         summary.proxy_disabled = !enable;
         save_account_index(&index)?;

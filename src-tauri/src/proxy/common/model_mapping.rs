@@ -261,36 +261,43 @@ pub fn resolve_model_route(
     result
 }
 
-/// Normalize any physical model name to one of the 3 standard protection IDs.
-/// This ensures quota protection works consistently regardless of API versioning or request variations.
-/// 
-/// Standard IDs:
-/// - `gemini-3-flash`: All Flash variants (1.5-flash, 2.5-flash, 3-flash, etc.)
-/// - `gemini-3-pro-high`: All Pro variants (1.5-pro, 2.5-pro, etc.)
-/// - `claude-sonnet-4-5`: All Claude Sonnet variants (3-5-sonnet, sonnet-4-5, etc.)
-/// 
-/// Returns `None` if the model doesn't match any of the 3 protected categories.
+/// Normalize any model name to one of the standard protection group IDs.
+/// This ensures quota protection works consistently regardless of API versioning,
+/// model aliases, or request variations.
+///
+/// Uses a two-stage approach:
+/// 1. Resolve the input through CLAUDE_TO_GEMINI to get the upstream target model
+/// 2. Classify the upstream target using `contains()` matching
+///
+/// Standard protection groups:
+/// - `gemini-3-flash`: All Flash variants
+/// - `gemini-3-pro-high`: All Pro variants (excluding image)
+/// - `gemini-3-pro-image`: Image generation models
+/// - `claude`: All Claude/Opus/Sonnet variants
+///
+/// Returns `None` if the model doesn't match any protected category.
 pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
-    let lower = model_name.to_lowercase();
-    
-    match lower.as_str() {
-        // 1. gemini-3-pro-image (严格匹配)
-        "gemini-3-pro-image" => Some("gemini-3-pro-image".to_string()),
+    // Stage 1: Resolve through CLAUDE_TO_GEMINI to get the upstream target
+    // This handles all aliases (claude-opus-4, gpt-4-turbo, etc.)
+    let upstream = CLAUDE_TO_GEMINI
+        .get(model_name)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| model_name.to_string());
 
-        // 2. gemini-3-flash (严格匹配)
-        "gemini-3-flash" => Some("gemini-3-flash".to_string()),
+    let lower = upstream.to_lowercase();
 
-        // 3. gemini-3-pro-high (含 Pro High 和 Pro Low)
-        "gemini-3-pro-high" | "gemini-3-pro-low" => Some("gemini-3-pro-high".to_string()),
-
-        // 4. Claude 4.6 系列 (严格名单匹配)
-        "claude-opus-4-6-thinking" |
-        "claude-opus-4-5-thinking" |
-        "claude-sonnet-4-5-thinking" |
-        "claude-sonnet-4-5" |
-        "claude" => Some("claude".to_string()),
-
-        _ => None
+    // Stage 2: Classify using contains() on the upstream target
+    // Order matters: check more specific patterns first
+    if lower.contains("pro-image") {
+        Some("gemini-3-pro-image".to_string())
+    } else if lower.contains("flash") {
+        Some("gemini-3-flash".to_string())
+    } else if lower.contains("pro") && lower.starts_with("gemini") {
+        Some("gemini-3-pro-high".to_string())
+    } else if lower.contains("claude") || lower.contains("opus") || lower.contains("sonnet") {
+        Some("claude".to_string())
+    } else {
+        None
     }
 }
 
@@ -334,6 +341,34 @@ mod tests {
             normalize_to_standard_id("gemini-3-pro-high"),
             Some("gemini-3-pro-high".to_string())
         );
+    }
+
+    #[test]
+    fn test_normalization_covers_all_aliases() {
+        // Every key in CLAUDE_TO_GEMINI must resolve to a non-None protection group
+        for (alias, _target) in CLAUDE_TO_GEMINI.iter() {
+            let result = normalize_to_standard_id(alias);
+            assert!(
+                result.is_some(),
+                "CLAUDE_TO_GEMINI key '{}' returned None from normalize_to_standard_id — quota bypass!",
+                alias
+            );
+        }
+    }
+
+    #[test]
+    fn test_normalization_variant_aliases() {
+        // Aliases that previously bypassed quota must now be caught
+        assert_eq!(normalize_to_standard_id("claude-opus-4"), Some("claude".to_string()));
+        assert_eq!(normalize_to_standard_id("claude-opus-4-6-20260201"), Some("claude".to_string()));
+        assert_eq!(normalize_to_standard_id("claude-sonnet-4-5-20250929"), Some("claude".to_string()));
+        assert_eq!(normalize_to_standard_id("claude-haiku-4"), Some("claude".to_string()));
+        assert_eq!(normalize_to_standard_id("gpt-4"), Some("gemini-3-flash".to_string()));
+        assert_eq!(normalize_to_standard_id("gpt-4o-mini"), Some("gemini-3-flash".to_string()));
+        assert_eq!(normalize_to_standard_id("gemini-2.5-flash-lite"), Some("gemini-3-flash".to_string()));
+        assert_eq!(normalize_to_standard_id("gemini-3-pro-low"), Some("gemini-3-pro-high".to_string()));
+        // Unknown model returns None (no quota protection)
+        assert_eq!(normalize_to_standard_id("unknown-model"), None);
     }
 
     #[test]

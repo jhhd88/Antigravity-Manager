@@ -306,52 +306,81 @@ pub async fn brew_upgrade_cask() -> Result<String, String> {
 
 #[cfg(target_os = "macos")]
 pub async fn brew_upgrade_cask() -> Result<String, String> {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+    static UPGRADING: AtomicBool = AtomicBool::new(false);
+    static LAST_RUN: AtomicU64 = AtomicU64::new(0);
+
+    const COOLDOWN_SECS: u64 = 300; // 5 minutes
+
+    // Cooldown check
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let last = LAST_RUN.load(Ordering::Relaxed);
+    if last > 0 && now.saturating_sub(last) < COOLDOWN_SECS {
+        return Err("brew_cooldown".to_string());
+    }
+
+    // Concurrency guard
+    if UPGRADING.compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed).is_err() {
+        return Err("brew_already_running".to_string());
+    }
+
+    LAST_RUN.store(now, Ordering::Relaxed);
+
     logger::log_info("Starting Homebrew Cask upgrade for antigravity-tools...");
 
-    // Find brew binary
-    let brew_path = if std::path::Path::new("/opt/homebrew/bin/brew").exists() {
-        "/opt/homebrew/bin/brew"
-    } else if std::path::Path::new("/usr/local/bin/brew").exists() {
-        "/usr/local/bin/brew"
-    } else {
-        return Err("brew_not_found".to_string());
-    };
-
-    // 3 min timeout to prevent hanging
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(180),
-        tokio::process::Command::new(brew_path)
-            .args(["upgrade", "--cask", "antigravity-tools"])
-            .output()
-    ).await;
-
-    let output = match result {
-        Ok(Ok(output)) => output,
-        Ok(Err(e)) => {
-            logger::log_error(&format!("Failed to execute brew upgrade: {}", e));
-            return Err("brew_exec_failed".to_string());
-        }
-        Err(_) => {
-            logger::log_error("Homebrew upgrade timed out after 3 minutes");
-            return Err("brew_timeout".to_string());
-        }
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    if output.status.success() {
-        logger::log_info(&format!("Homebrew upgrade succeeded: {}", stdout));
-        Ok(stdout)
-    } else {
-        logger::log_error(&format!("brew upgrade failed - stdout: {} stderr: {}", stdout, stderr));
-        // Return structured error key for frontend i18n
-        if stderr.contains("already installed") || stdout.contains("already installed") {
-            Err("brew_already_latest".to_string())
+    // Execute in inner block so UPGRADING is always released
+    let result = async {
+        // Find brew binary
+        let brew_path = if std::path::Path::new("/opt/homebrew/bin/brew").exists() {
+            "/opt/homebrew/bin/brew"
+        } else if std::path::Path::new("/usr/local/bin/brew").exists() {
+            "/usr/local/bin/brew"
         } else {
-            Err("brew_upgrade_failed".to_string())
+            return Err("brew_not_found".to_string());
+        };
+
+        // 3 min timeout to prevent hanging
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(180),
+            tokio::process::Command::new(brew_path)
+                .args(["upgrade", "--cask", "antigravity-tools"])
+                .output()
+        ).await;
+
+        let output = match result {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => {
+                logger::log_error(&format!("Failed to execute brew upgrade: {}", e));
+                return Err("brew_exec_failed".to_string());
+            }
+            Err(_) => {
+                logger::log_error("Homebrew upgrade timed out after 3 minutes");
+                return Err("brew_timeout".to_string());
+            }
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        if output.status.success() {
+            logger::log_info(&format!("Homebrew upgrade succeeded: {}", stdout));
+            Ok(stdout)
+        } else {
+            logger::log_error(&format!("brew upgrade failed - stdout: {} stderr: {}", stdout, stderr));
+            if stderr.contains("already installed") || stdout.contains("already installed") {
+                Err("brew_already_latest".to_string())
+            } else {
+                Err("brew_upgrade_failed".to_string())
+            }
         }
-    }
+    }.await;
+
+    UPGRADING.store(false, Ordering::SeqCst);
+    result
 }
 
 #[cfg(test)]

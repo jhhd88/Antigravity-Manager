@@ -1,5 +1,5 @@
-//! 测试 determine_retry_strategy 和 should_rotate_account 的所有分支，
-//! 重点覆盖 404 重试与账号轮换逻辑。
+//! 测试 determine_retry_strategy 和 should_rotate_account 的所有分支。
+//! 404 is treated as non-retryable (model not found).
 
 use std::time::Duration;
 use crate::proxy::handlers::common::{determine_retry_strategy, should_rotate_account, RetryStrategy};
@@ -7,12 +7,13 @@ use crate::proxy::handlers::common::{determine_retry_strategy, should_rotate_acc
 // ===== determine_retry_strategy =====
 
 #[test]
-fn test_retry_strategy_404() {
+fn test_retry_strategy_404_no_retry() {
     let strategy = determine_retry_strategy(404, "", false);
-    match strategy {
-        RetryStrategy::FixedDelay(d) => assert_eq!(d, Duration::from_millis(300)),
-        other => panic!("Expected FixedDelay(300ms), got {:?}", other),
-    }
+    assert!(
+        matches!(strategy, RetryStrategy::NoRetry),
+        "Expected NoRetry for 404 (model not found), got {:?}",
+        strategy
+    );
 }
 
 #[test]
@@ -113,7 +114,7 @@ fn test_retry_strategy_400_no_signature() {
 
 #[test]
 fn test_rotate_account_true_cases() {
-    for status in [429, 401, 403, 404, 500] {
+    for status in [429, 401, 403, 500] {
         assert!(
             should_rotate_account(status),
             "Expected should_rotate_account({}) == true",
@@ -124,7 +125,7 @@ fn test_rotate_account_true_cases() {
 
 #[test]
 fn test_rotate_account_false_cases() {
-    for status in [400, 503, 529, 200, 502] {
+    for status in [400, 404, 503, 529, 200, 502] {
         assert!(
             !should_rotate_account(status),
             "Expected should_rotate_account({}) == false",

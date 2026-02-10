@@ -9,6 +9,7 @@ use tracing::{debug, info};
 use uuid::Uuid;
 
 use crate::proxy::{audio::AudioProcessor, server::AppState};
+use crate::proxy::upstream::client::mask_email;
 
 /// 处理音频转录请求 (OpenAI Whisper API 兼容)
 pub async fn handle_audio_transcription(
@@ -159,9 +160,10 @@ pub async fn handle_audio_transcription(
     info!("音频转录完成，返回 {} 字符", text.len());
 
     // 10. 返回标准格式响应
+    let masked_email = mask_email(&email);
     Ok((
         StatusCode::OK,
-        [("X-Account-Email", email.as_str())],
+        [("X-Account-Email", masked_email.as_str())],
         Json(json!({
             "text": text
         })),

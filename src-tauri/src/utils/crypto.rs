@@ -1,6 +1,6 @@
 use aes_gcm::{
-    aead::{Aead, KeyInit},
-    Aes256Gcm, Nonce,
+    aead::{Aead, KeyInit, OsRng},
+    Aes256Gcm, AeadCore, Nonce,
 };
 use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Deserializer, Serializer};
@@ -8,6 +8,7 @@ use sha2::Digest;
 
 const FIXED_NONCE: &[u8; 12] = b"antigravsalt";
 const ENCRYPTED_PREFIX: &str = "ag_enc_";
+const ENCRYPTED_V2_PREFIX: &str = "ag_enc_v2_";
 
 /// 生成加密密钥 (基于设备 ID)
 fn get_encryption_key() -> [u8; 32] {
@@ -23,8 +24,8 @@ pub fn serialize_password<S>(password: &str, serializer: S) -> Result<S::Ok, S::
 where
     S: Serializer,
 {
-    // [FIX #1738] 防止双重加密：检查是否已包含魔术前缀
-    if password.starts_with(ENCRYPTED_PREFIX) {
+    // Prevent double-encryption: check for magic prefixes
+    if password.starts_with(ENCRYPTED_V2_PREFIX) || password.starts_with(ENCRYPTED_PREFIX) {
         return serializer.serialize_str(password);
     }
 
@@ -41,53 +42,76 @@ where
         return Ok(raw);
     }
 
-    // [FIX #1738] 检查魔术前缀
-    if raw.starts_with(ENCRYPTED_PREFIX) {
-        // 新版格式：去前缀后解密
-        let ciphertext = &raw[ENCRYPTED_PREFIX.len()..];
-        match decrypt_string_internal(ciphertext) {
+    // v2 format: ag_enc_v2_{base64(nonce || ciphertext)}
+    if raw.starts_with(ENCRYPTED_V2_PREFIX) {
+        let payload = &raw[ENCRYPTED_V2_PREFIX.len()..];
+        match decrypt_v2_internal(payload) {
             Ok(plaintext) => Ok(plaintext),
-            Err(_) => {
-                // 解密失败（如密钥变更），返回原始密文以防止数据丢失
-                Ok(raw)
-            }
+            Err(_) => Ok(raw), // Decryption failed (key changed), return raw to prevent data loss
+        }
+    }
+    // v1 format: ag_enc_{base64(ciphertext)} — fixed nonce
+    else if raw.starts_with(ENCRYPTED_PREFIX) {
+        let ciphertext = &raw[ENCRYPTED_PREFIX.len()..];
+        match decrypt_v1_internal(ciphertext) {
+            Ok(plaintext) => Ok(plaintext),
+            Err(_) => Ok(raw),
         }
     } else {
-        // 兼容旧版：尝试直接解密
-        match decrypt_string_internal(&raw) {
-            Ok(plaintext) => {
-                // 只有当解密出有效的 UTF-8 且看起来像合理个字符串时才认为是旧版密文
-                // 这里 decrypt_string_internal 已经保证了 UTF-8，
-                // 如果是用户输入的明文，通常解密会失败（Base64 错误或 Tag 校验错误）。
-                Ok(plaintext)
-            }
-            Err(_) => {
-                // 解密失败，认为是普通明文（用户输入的无前缀密码）
-                Ok(raw)
-            }
+        // Legacy: try direct decrypt (no prefix)
+        match decrypt_v1_internal(&raw) {
+            Ok(plaintext) => Ok(plaintext),
+            Err(_) => Ok(raw), // Not encrypted, return as plaintext
         }
     }
 }
 
+/// Encrypt using v2 format with random nonce
 pub fn encrypt_string(password: &str) -> Result<String, String> {
     let key = get_encryption_key();
     let cipher = Aes256Gcm::new(&key.into());
-    // In production, we should use a random nonce and prepend it to the ciphertext
-    // For simplicity in this demo, we use a fixed nonce (NOT SECURE for repeats)
-    // improving security: use random nonce
-    let nonce = Nonce::from_slice(FIXED_NONCE);
+
+    // Generate random 12-byte nonce
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
 
     let ciphertext = cipher
-        .encrypt(nonce, password.as_bytes())
+        .encrypt(&nonce, password.as_bytes())
         .map_err(|e| format!("Encryption failed: {}", e))?;
 
-    let base64_ciphertext = general_purpose::STANDARD.encode(ciphertext);
-    // [FIX #1738] 添加魔术前缀
-    Ok(format!("{}{}", ENCRYPTED_PREFIX, base64_ciphertext))
+    // Prepend nonce to ciphertext: nonce(12 bytes) || ciphertext
+    let mut combined = Vec::with_capacity(12 + ciphertext.len());
+    combined.extend_from_slice(&nonce);
+    combined.extend_from_slice(&ciphertext);
+
+    let base64_encoded = general_purpose::STANDARD.encode(&combined);
+    Ok(format!("{}{}", ENCRYPTED_V2_PREFIX, base64_encoded))
 }
 
-/// 内部解密函数 (输入必须是纯 Base64 密文，不含前缀)
-fn decrypt_string_internal(encrypted_base64: &str) -> Result<String, String> {
+/// Decrypt v2 format: base64 payload = nonce(12) || ciphertext
+fn decrypt_v2_internal(encrypted_base64: &str) -> Result<String, String> {
+    let key = get_encryption_key();
+    let cipher = Aes256Gcm::new(&key.into());
+
+    let combined = general_purpose::STANDARD
+        .decode(encrypted_base64)
+        .map_err(|e| format!("Base64 decode failed: {}", e))?;
+
+    if combined.len() < 13 {
+        return Err("Ciphertext too short (missing nonce)".to_string());
+    }
+
+    let (nonce_bytes, ciphertext) = combined.split_at(12);
+    let nonce = Nonce::from_slice(nonce_bytes);
+
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|e| format!("Decryption failed: {}", e))?;
+
+    String::from_utf8(plaintext).map_err(|e| format!("UTF-8 conversion failed: {}", e))
+}
+
+/// Decrypt v1 format: fixed nonce, base64 payload = ciphertext only
+fn decrypt_v1_internal(encrypted_base64: &str) -> Result<String, String> {
     let key = get_encryption_key();
     let cipher = Aes256Gcm::new(&key.into());
     let nonce = Nonce::from_slice(FIXED_NONCE);
@@ -104,10 +128,12 @@ fn decrypt_string_internal(encrypted_base64: &str) -> Result<String, String> {
 }
 
 pub fn decrypt_string(encrypted: &str) -> Result<String, String> {
-    if encrypted.starts_with(ENCRYPTED_PREFIX) {
-        decrypt_string_internal(&encrypted[ENCRYPTED_PREFIX.len()..])
+    if encrypted.starts_with(ENCRYPTED_V2_PREFIX) {
+        decrypt_v2_internal(&encrypted[ENCRYPTED_V2_PREFIX.len()..])
+    } else if encrypted.starts_with(ENCRYPTED_PREFIX) {
+        decrypt_v1_internal(&encrypted[ENCRYPTED_PREFIX.len()..])
     } else {
-        decrypt_string_internal(encrypted)
+        decrypt_v1_internal(encrypted)
     }
 }
 
@@ -116,11 +142,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_encrypt_decrypt_cycle() {
+    fn test_v2_encrypt_decrypt_cycle() {
         let password = "my_secret_password";
         let encrypted = encrypt_string(password).unwrap();
-        
-        assert!(encrypted.starts_with(ENCRYPTED_PREFIX));
+
+        assert!(encrypted.starts_with(ENCRYPTED_V2_PREFIX));
         assert_ne!(password, encrypted);
 
         let decrypted = decrypt_string(&encrypted).unwrap();
@@ -128,19 +154,44 @@ mod tests {
     }
 
     #[test]
-    fn test_legacy_compatibility() {
-        // 模拟旧版加密（手动调用内部逻辑生成无前缀密文）
+    fn test_v2_unique_nonces() {
+        let password = "same_password";
+        let enc1 = encrypt_string(password).unwrap();
+        let enc2 = encrypt_string(password).unwrap();
+        // Same plaintext should produce different ciphertexts (random nonce)
+        assert_ne!(enc1, enc2);
+        // But both should decrypt to the same value
+        assert_eq!(decrypt_string(&enc1).unwrap(), password);
+        assert_eq!(decrypt_string(&enc2).unwrap(), password);
+    }
+
+    #[test]
+    fn test_v1_backward_compatibility() {
+        // Simulate v1 encryption (fixed nonce, ag_enc_ prefix)
         let password = "legacy_password";
         let key = get_encryption_key();
         let cipher = Aes256Gcm::new(&key.into());
         let nonce = Nonce::from_slice(FIXED_NONCE);
         let ciphertext = cipher.encrypt(nonce, password.as_bytes()).unwrap();
-        let legacy_encrypted = general_purpose::STANDARD.encode(ciphertext);
+        let v1_encrypted = format!("{}{}", ENCRYPTED_PREFIX, general_purpose::STANDARD.encode(&ciphertext));
 
-        assert!(!legacy_encrypted.starts_with(ENCRYPTED_PREFIX));
+        // v1 format should still decrypt correctly
+        let decrypted = decrypt_string(&v1_encrypted).unwrap();
+        assert_eq!(password, decrypted);
+    }
 
-        // 使用新版解密逻辑
-        let decrypted = decrypt_string(&legacy_encrypted).unwrap();
+    #[test]
+    fn test_bare_legacy_compatibility() {
+        // Simulate bare legacy (no prefix at all)
+        let password = "bare_legacy";
+        let key = get_encryption_key();
+        let cipher = Aes256Gcm::new(&key.into());
+        let nonce = Nonce::from_slice(FIXED_NONCE);
+        let ciphertext = cipher.encrypt(nonce, password.as_bytes()).unwrap();
+        let bare_encrypted = general_purpose::STANDARD.encode(ciphertext);
+
+        assert!(!bare_encrypted.starts_with(ENCRYPTED_PREFIX));
+        let decrypted = decrypt_string(&bare_encrypted).unwrap();
         assert_eq!(password, decrypted);
     }
 }

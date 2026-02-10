@@ -418,7 +418,7 @@ pub async fn handle_generate(
                         .header("Cache-Control", "no-cache")
                         .header("Connection", "keep-alive")
                         .header("X-Accel-Buffering", "no")
-                        .header("X-Account-Email", &email)
+                        .header("X-Account-Email", mask_email(&email))
                         .header("X-Mapped-Model", &mapped_model)
                         .body(body)
                         .unwrap()
@@ -433,10 +433,11 @@ pub async fn handle_generate(
                                 session_id
                             );
                             let unwrapped = unwrap_response(&gemini_resp);
+                            let masked = mask_email(&email);
                             return Ok((
                                 StatusCode::OK,
                                 [
-                                    ("X-Account-Email", email.as_str()),
+                                    ("X-Account-Email", masked.as_str()),
                                     ("X-Mapped-Model", mapped_model.as_str()),
                                 ],
                                 Json(unwrapped),
@@ -499,10 +500,11 @@ pub async fn handle_generate(
             }
 
             let unwrapped = unwrap_response(&gemini_resp);
+            let masked = mask_email(&email);
             return Ok((
                 StatusCode::OK,
                 [
-                    ("X-Account-Email", email.as_str()),
+                    ("X-Account-Email", masked.as_str()),
                     ("X-Mapped-Model", mapped_model.as_str()),
                 ],
                 Json(unwrapped),
@@ -601,10 +603,11 @@ pub async fn handle_generate(
             "Gemini Upstream non-retryable error {}: {}",
             status_code, error_text
         );
+        let masked = mask_email(&email);
         return Ok((
             status,
             [
-                ("X-Account-Email", email.as_str()),
+                ("X-Account-Email", masked.as_str()),
                 ("X-Mapped-Model", mapped_model.as_str()),
             ],
             // [FIX] Return JSON error
@@ -622,7 +625,7 @@ pub async fn handle_generate(
     if let Some(email) = last_email {
         Ok((
             StatusCode::TOO_MANY_REQUESTS,
-            [("X-Account-Email", email)],
+            [("X-Account-Email", mask_email(&email))],
             format!("All accounts exhausted. Last error: {}", last_error),
         )
             .into_response())

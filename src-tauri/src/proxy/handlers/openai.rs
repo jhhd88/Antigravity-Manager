@@ -434,7 +434,7 @@ pub async fn handle_chat_completions(
                         .header("Cache-Control", "no-cache")
                         .header("Connection", "keep-alive")
                         .header("X-Accel-Buffering", "no")
-                        .header("X-Account-Email", &email)
+                        .header("X-Account-Email", mask_email(&email))
                         .header("X-Mapped-Model", &mapped_model)
                         .body(body)
                         .unwrap()
@@ -447,10 +447,11 @@ pub async fn handle_chat_completions(
                     match collect_stream_to_json(Box::pin(combined_stream)).await {
                         Ok(full_response) => {
                             info!("[{}] ✓ Stream collected and converted to JSON", trace_id);
+                            let masked_email = mask_email(&email);
                             return Ok((
                                 StatusCode::OK,
                                 [
-                                    ("X-Account-Email", email.as_str()),
+                                    ("X-Account-Email", masked_email.as_str()),
                                     ("X-Mapped-Model", mapped_model.as_str()),
                                 ],
                                 Json(full_response),
@@ -476,10 +477,11 @@ pub async fn handle_chat_completions(
 
             let openai_response =
                 transform_openai_response(&gemini_resp, Some(&session_id), message_count);
+            let masked_email = mask_email(&email);
             return Ok((
                 StatusCode::OK,
                 [
-                    ("X-Account-Email", email.as_str()),
+                    ("X-Account-Email", masked_email.as_str()),
                     ("X-Mapped-Model", mapped_model.as_str()),
                 ],
                 Json(openai_response),
@@ -635,27 +637,11 @@ pub async fn handle_chat_completions(
             continue; // 重试
         }
 
-        // 只有 403 (权限/地区限制) 和 401 (认证失效) 触发账号轮换
+        // 401 (认证失效) / 403 (权限/地区限制) — mark forbidden then rotate
         if status_code == 403 || status_code == 401 {
-            if apply_retry_strategy(
-                RetryStrategy::FixedDelay(Duration::from_millis(200)),
-                attempt,
-                max_attempts,
-                status_code,
-                &trace_id,
-            )
-            .await
-            {
-                continue;
-            }
-        }
-
-        // 只有 403 (权限/地区限制) 和 401 (认证失效) 触发账号轮换
-        if status_code == 403 || status_code == 401 {
-            // [NEW] 403 时设置 is_forbidden 状态，避免 Claude Code 会话退出
+            // 403: set is_forbidden and handle VALIDATION_REQUIRED before retry
             if status_code == 403 {
                 if let Some(acc_id) = token_manager.get_account_id_by_email(&email) {
-                    // Check for VALIDATION_REQUIRED error - temporarily block account
                     if error_text.contains("VALIDATION_REQUIRED")
                         || error_text.contains("verify your account")
                         || error_text.contains("validation_url")
@@ -664,7 +650,6 @@ pub async fn handle_chat_completions(
                             "[OpenAI] VALIDATION_REQUIRED detected on account {}, temporarily blocking",
                             email
                         );
-                        // Block for 10 minutes (default, configurable via config file)
                         let block_minutes = 10i64;
                         let block_until = chrono::Utc::now().timestamp() + (block_minutes * 60);
 
@@ -676,7 +661,6 @@ pub async fn handle_chat_completions(
                         }
                     }
 
-                    // 设置 is_forbidden 状态
                     if let Err(e) = token_manager.set_forbidden(&acc_id, &error_text).await {
                         tracing::error!("Failed to set forbidden status: {}", e);
                     }
@@ -701,10 +685,11 @@ pub async fn handle_chat_completions(
             "OpenAI Upstream non-retryable error {} on account {}: {}",
             status_code, email, error_text
         );
+        let masked_email = mask_email(&email);
         return Ok((
             status,
             [
-                ("X-Account-Email", email.as_str()),
+                ("X-Account-Email", masked_email.as_str()),
                 ("X-Mapped-Model", mapped_model.as_str()),
             ],
             // [FIX] Return JSON error for better client compatibility
@@ -723,7 +708,7 @@ pub async fn handle_chat_completions(
     if let Some(email) = last_email {
         Ok((
             StatusCode::TOO_MANY_REQUESTS,
-            [("X-Account-Email", email), ("X-Mapped-Model", mapped_model)],
+            [("X-Account-Email", mask_email(&email)), ("X-Mapped-Model", mapped_model)],
             format!("All accounts exhausted. Last error: {}", last_error),
         )
             .into_response())
@@ -1323,7 +1308,7 @@ pub async fn handle_completions(
                         .header("Content-Type", "text/event-stream")
                         .header("Cache-Control", "no-cache")
                         .header("Connection", "keep-alive")
-                        .header("X-Account-Email", &email)
+                        .header("X-Account-Email", mask_email(&email))
                         .header("X-Mapped-Model", &mapped_model)
                         .body(Body::from_stream(combined_stream))
                         .unwrap()
@@ -1421,10 +1406,11 @@ pub async fn handle_completions(
                                 "usage": chat_resp.usage
                             });
 
+                            let masked_email = mask_email(&email);
                             return (
                                 StatusCode::OK,
                                 [
-                                    ("X-Account-Email", email.as_str()),
+                                    ("X-Account-Email", masked_email.as_str()),
                                     ("X-Mapped-Model", mapped_model.as_str()),
                                 ],
                                 Json(legacy_resp),
@@ -1478,10 +1464,11 @@ pub async fn handle_completions(
                 "usage": chat_resp.usage
             });
 
+            let masked_email = mask_email(&email);
             return (
                 StatusCode::OK,
                 [
-                    ("X-Account-Email", email.as_str()),
+                    ("X-Account-Email", masked_email.as_str()),
                     ("X-Mapped-Model", mapped_model.as_str()),
                 ],
                 Json(legacy_resp),
@@ -1529,10 +1516,11 @@ pub async fn handle_completions(
             continue;
         } else {
             // 不可重试
+            let masked_email = mask_email(&email);
             return (
                 status,
                 [
-                    ("X-Account-Email", email.as_str()),
+                    ("X-Account-Email", masked_email.as_str()),
                     ("X-Mapped-Model", mapped_model.as_str()),
                 ],
                 error_text,
@@ -1545,7 +1533,7 @@ pub async fn handle_completions(
     if let Some(email) = last_email {
         (
             StatusCode::TOO_MANY_REQUESTS,
-            [("X-Account-Email", email), ("X-Mapped-Model", mapped_model)],
+            [("X-Account-Email", mask_email(&email)), ("X-Mapped-Model", mapped_model)],
             format!("All accounts exhausted. Last error: {}", last_error),
         )
             .into_response()
@@ -1870,11 +1858,12 @@ pub async fn handle_images_generations(
     });
 
     let email_header = used_email.unwrap_or_default();
+    let masked_email = mask_email(&email_header);
     Ok((
         StatusCode::OK,
         [
             ("X-Mapped-Model", "dall-e-3"),
-            ("X-Account-Email", email_header.as_str()),
+            ("X-Account-Email", masked_email.as_str()),
         ],
         Json(openai_response),
     )
@@ -2260,11 +2249,12 @@ pub async fn handle_images_edits(
     });
 
     let email_header = used_email.unwrap_or_default();
+    let masked_email = mask_email(&email_header);
     Ok((
         StatusCode::OK,
         [
             ("X-Mapped-Model", "dall-e-3"),
-            ("X-Account-Email", email_header.as_str()),
+            ("X-Account-Email", masked_email.as_str()),
         ],
         Json(openai_response),
     )

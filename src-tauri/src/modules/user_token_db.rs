@@ -542,20 +542,31 @@ pub fn validate_token(token_str: &str, ip: &str) -> Result<(bool, Option<String>
         // 使用固定 UTC+8 (北京时间)，不依赖服务器本地时区
         if let (Some(start_str), Some(end_str)) = (&token.curfew_start, &token.curfew_end) {
             if !start_str.is_empty() && !end_str.is_empty() {
+                use chrono::NaiveTime;
+
                 let beijing_offset = FixedOffset::east_opt(8 * 3600).unwrap();
                 let now_beijing = Utc::now().with_timezone(&beijing_offset);
                 let current_time_str = format!("{:02}:{:02}", now_beijing.hour(), now_beijing.minute());
 
-                // 跨午夜处理: start > end (e.g. 23:00 to 06:00)
-                // 正常: start < end (e.g. 09:00 to 18:00)
-                let is_curfew = if start_str > end_str {
-                    current_time_str >= *start_str || current_time_str < *end_str
-                } else {
-                    current_time_str >= *start_str && current_time_str < *end_str
-                };
+                // Parse times using chrono for robust comparison
+                if let (Ok(start_t), Ok(end_t), Ok(now_t)) = (
+                    NaiveTime::parse_from_str(start_str, "%H:%M"),
+                    NaiveTime::parse_from_str(end_str, "%H:%M"),
+                    NaiveTime::parse_from_str(&current_time_str, "%H:%M"),
+                ) {
+                    // 跨午夜处理: start > end (e.g. 23:00 to 06:00)
+                    // 正常: start < end (e.g. 09:00 to 18:00)
+                    let is_curfew = if start_t > end_t {
+                        now_t >= start_t || now_t < end_t
+                    } else {
+                        now_t >= start_t && now_t < end_t
+                    };
 
-                if is_curfew {
-                     return Ok((false, Some(format!("Service is not available between {} and {} Beijing Time (Curfew enabled). Current Beijing time: {}", start_str, end_str, current_time_str))));
+                    if is_curfew {
+                        return Ok((false, Some(format!("Service is not available between {} and {} Beijing Time (Curfew enabled). Current Beijing time: {}", start_str, end_str, current_time_str))));
+                    }
+                } else {
+                    tracing::warn!("Failed to parse curfew times: start='{}', end='{}'", start_str, end_str);
                 }
             }
         }

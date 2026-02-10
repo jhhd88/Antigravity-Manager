@@ -13,6 +13,16 @@ import { getVersion } from '@tauri-apps/api/app';
 import { listen } from '@tauri-apps/api/event';
 
 import { useConfigStore } from '../../stores/useConfigStore';
+import { version as APP_VERSION } from '../../../package.json';
+
+/** Mask an email address for display: "user@example.com" → "us***@example.com" */
+function maskEmail(email?: string): string {
+    if (!email) return '';
+    const [local, domain] = email.split('@');
+    if (!domain) return email;
+    const visible = local.slice(0, Math.min(2, local.length));
+    return `${visible}***@${domain}`;
+}
 
 interface ProxyRequestLog {
     id: string;
@@ -43,7 +53,6 @@ export default function MiniView() {
             if (!isTauri()) return;
             try {
                 unlistenFn = await listen<ProxyRequestLog>('proxy://request', (event) => {
-                    console.log(event)
                     setLatestLog(event.payload);
                 });
             } catch (e) {
@@ -69,8 +78,8 @@ export default function MiniView() {
                     console.error('Failed to get app version:', e);
                 }
             } else {
-                // Fallback for web mode if needed, or import from package.json
-                setAppVersion('4.1.10');
+                // Fallback for web mode — use build-time version from package.json
+                setAppVersion(APP_VERSION);
             }
         };
         fetchVersion();
@@ -80,11 +89,11 @@ export default function MiniView() {
     useEffect(() => {
         if (!config?.auto_refresh || !config?.refresh_interval || config.refresh_interval <= 0) return;
 
-        console.log(`[MiniView] Starting auto-refresh timer: ${config.refresh_interval} mins`);
+        if (import.meta.env.DEV) console.log(`[MiniView] Starting auto-refresh timer: ${config.refresh_interval} mins`);
 
         const intervalId = setInterval(() => {
             if (!isRefreshing && currentAccount) {
-                console.log('[MiniView] Auto-refreshing quota...');
+                if (import.meta.env.DEV) console.log('[MiniView] Auto-refreshing quota...');
                 handleRefresh();
             }
         }, config.refresh_interval * 60 * 1000);
@@ -204,7 +213,7 @@ export default function MiniView() {
                 >
                     <div className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white overflow-hidden">
                         <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)] animate-pulse shrink-0" />
-                        <span className="truncate" title={currentAccount?.email}>
+                        <span className="truncate" title={maskEmail(currentAccount?.email)}>
                             {currentAccount?.email?.split('@')[0] || 'No Account'}
                         </span>
                     </div>

@@ -388,7 +388,7 @@ pub async fn handle_messages(
     let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size.saturating_add(1)).max(2);
 
     let mut last_error = String::new();
-    let retried_without_thinking = false;
+    let mut retried_without_thinking = false;
     let mut last_email: Option<String> = None;
     let mut last_mapped_model: Option<String> = None;
     let mut last_status = StatusCode::SERVICE_UNAVAILABLE; // Default to 503 if no response reached
@@ -664,9 +664,10 @@ pub async fn handle_messages(
                 b
             },
             Err(e) => {
+                 let masked_email = mask_email(&email);
                  let headers = [
                     ("X-Mapped-Model", request_with_mapped.model.as_str()),
-                    ("X-Account-Email", email.as_str()),
+                    ("X-Account-Email", masked_email.as_str()),
                 ];
                  return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -883,7 +884,7 @@ pub async fn handle_messages(
                                 .header(header::CACHE_CONTROL, "no-cache")
                                 .header(header::CONNECTION, "keep-alive")
                                 .header("X-Accel-Buffering", "no")
-                                .header("X-Account-Email", &email)
+                                .header("X-Account-Email", mask_email(&email))
                                 .header("X-Mapped-Model", &request_with_mapped.model)
                                 .header("X-Context-Purified", if is_purified { "true" } else { "false" })
                                 .body(Body::from_stream(combined_stream))
@@ -898,7 +899,7 @@ pub async fn handle_messages(
                                     return Response::builder()
                                         .status(StatusCode::OK)
                                         .header(header::CONTENT_TYPE, "application/json")
-                                        .header("X-Account-Email", &email)
+                                        .header("X-Account-Email", mask_email(&email))
                                         .header("X-Mapped-Model", &request_with_mapped.model)
                                         .header("X-Context-Purified", if is_purified { "true" } else { "false" })
                                         .body(Body::from(serde_json::to_string(&full_response).unwrap()))
@@ -978,7 +979,8 @@ pub async fn handle_messages(
                     cache_info
                 );
 
-                return (StatusCode::OK, [("X-Account-Email", email.as_str()), ("X-Mapped-Model", request_with_mapped.model.as_str())], Json(claude_response)).into_response();
+                let masked_email = mask_email(&email);
+                return (StatusCode::OK, [("X-Account-Email", masked_email.as_str()), ("X-Mapped-Model", request_with_mapped.model.as_str())], Json(claude_response)).into_response();
             }
         }
         
@@ -1010,7 +1012,7 @@ pub async fn handle_messages(
         
         // 3. 标记限流状态(用于 UI 显示) - 使用异步版本以支持实时配额刷新
         // 🆕 传入实际使用的模型,实现模型级别限流,避免不同模型配额互相影响
-        if status_code == 429 || status_code == 529 || status_code == 503 || status_code == 500 || status_code == 404 {
+        if status_code == 429 || status_code == 529 || status_code == 503 || status_code == 500 {
             token_manager.mark_rate_limited_async(&email, status_code, retry_after.as_deref(), &error_text, Some(&request_with_mapped.model)).await;
         }
 
@@ -1032,7 +1034,7 @@ pub async fn handle_messages(
                 || error_text.contains("must be 'thinking'")
                 )
         {
-            // Existing logic for thinking signature...\n            retried_without_thinking = true;
+            retried_without_thinking = true;
             
             // 使用 WARN 级别,因为这不应该经常发生(已经主动过滤过)
             tracing::warn!(
@@ -1165,9 +1167,10 @@ pub async fn handle_messages(
         } else {
             // 5. 增强的 400 错误处理: Prompt Too Long 友好提示
             if status_code == 400 && (error_text.contains("too long") || error_text.contains("exceeds") || error_text.contains("limit")) {
+                 let masked_email = mask_email(&email);
                  return (
                     StatusCode::BAD_REQUEST,
-                    [("X-Account-Email", email.as_str())],
+                    [("X-Account-Email", masked_email.as_str())],
                     Json(json!({
                         "id": "err_prompt_too_long",
                         "type": "error",
@@ -1182,8 +1185,9 @@ pub async fn handle_messages(
 
             // 不可重试的错误，直接返回
             error!("[{}] Non-retryable error {}: {}", trace_id, status_code, error_text);
+            let masked_email = mask_email(&email);
             return (status, [
-                ("X-Account-Email", email.as_str()),
+                ("X-Account-Email", masked_email.as_str()),
                 ("X-Mapped-Model", request_with_mapped.model.as_str())
             ], error_text).into_response();
         }
@@ -1193,7 +1197,7 @@ pub async fn handle_messages(
     if let Some(email) = last_email {
         // [FIX] Include X-Mapped-Model in exhaustion error
         let mut headers = HeaderMap::new();
-        headers.insert("X-Account-Email", header::HeaderValue::from_str(&email).unwrap());
+        headers.insert("X-Account-Email", header::HeaderValue::from_str(&mask_email(&email)).unwrap());
         if let Some(model) = last_mapped_model {
              if let Ok(v) = header::HeaderValue::from_str(&model) {
                 headers.insert("X-Mapped-Model", v);

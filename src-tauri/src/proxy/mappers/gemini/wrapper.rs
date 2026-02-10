@@ -251,9 +251,16 @@ pub fn wrap_request(
         }
     }
 
-    // [FIX] Removed forced maxOutputTokens (64000) as it exceeds limits for Gemini 1.5 Flash/Pro standard models (8192).
-    // This caused upstream to return empty/invalid responses, leading to 'NoneType' object has no attribute 'strip' in Python clients.
-    // relying on upstream defaults or user provided values is safer.
+    // [SECURITY] Cap maxOutputTokens to prevent resource exhaustion.
+    // We don't force a value (that broke older models), but clip excessively large requests.
+    if let Some(gen_config) = inner_request.get_mut("generationConfig").and_then(|c| c.as_object_mut()) {
+        if let Some(max_output) = gen_config.get("maxOutputTokens").and_then(|v| v.as_i64()) {
+            if max_output > 65536 {
+                gen_config.insert("maxOutputTokens".to_string(), json!(65536));
+                tracing::debug!("Capped maxOutputTokens from {} to 65536", max_output);
+            }
+        }
+    }
 
     // 提取 tools 列表以进行联网探测 (Gemini 风格可能是嵌套的)
     let tools_val: Option<Vec<Value>> = inner_request

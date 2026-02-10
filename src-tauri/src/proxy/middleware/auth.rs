@@ -97,10 +97,36 @@ async fn auth_middleware_internal(
             return Ok(next.run(request).await);
         }
 
-        // 内部端点 (/internal/*) 豁免鉴权 - 用于 warmup 等内部功能
+        // 内部端点 (/internal/*) — only allow from loopback/Docker bridge
         if is_internal_endpoint {
-            tracing::debug!("Internal endpoint bypassed auth: {}", path);
-            return Ok(next.run(request).await);
+            let client_ip = request
+                .headers()
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+                .or_else(|| {
+                    request
+                        .headers()
+                        .get("x-real-ip")
+                        .and_then(|v| v.to_str().ok())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| "127.0.0.1".to_string());
+
+            let is_loopback = client_ip == "127.0.0.1"
+                || client_ip == "::1"
+                || client_ip == "localhost"
+                || client_ip.starts_with("172.17.")  // Docker bridge default
+                || client_ip.starts_with("172.18.")  // Docker compose network
+                || client_ip.starts_with("172.19.");
+
+            if is_loopback {
+                tracing::debug!("Internal endpoint from loopback ({}): {}", client_ip, path);
+                return Ok(next.run(request).await);
+            } else {
+                tracing::warn!("Blocked /internal/ access from non-loopback IP: {} -> {}", client_ip, path);
+                return Err(StatusCode::FORBIDDEN);
+            }
         }
     } else {
         // 管理接口 (/api/*)
@@ -211,10 +237,12 @@ async fn auth_middleware_internal(
             }
             Ok((false, reason)) => {
                 let reason_str = reason.unwrap_or_else(|| "Access denied".to_string());
+                // Keep detailed reason in server logs only
                 tracing::warn!("UserToken rejected: {}", reason_str);
+                // Return generic message to client to avoid leaking operational details
                 let body = serde_json::json!({
                     "error": {
-                        "message": reason_str,
+                        "message": "Access denied. Please check your API key or contact the administrator.",
                         "type": "token_rejected",
                         "code": "token_rejected"
                     }

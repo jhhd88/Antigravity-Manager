@@ -17,6 +17,7 @@ use tracing::{info, warn};
 use crate::proxy::mappers::gemini::wrapper::wrap_request;
 use crate::proxy::monitor::ProxyRequestLog;
 use crate::proxy::server::AppState;
+use crate::proxy::upstream::client::mask_email;
 
 /// 预热请求体
 #[derive(Debug, Deserialize)]
@@ -286,7 +287,8 @@ pub async fn handle_warmup(
             };
 
             // 添加响应头，让监控中间件捕获账号信息
-            if let Ok(email_val) = axum::http::HeaderValue::from_str(&req.email) {
+            let masked = mask_email(&req.email);
+            if let Ok(email_val) = axum::http::HeaderValue::from_str(&masked) {
                 response.headers_mut().insert("X-Account-Email", email_val);
             }
             if let Ok(model_val) = axum::http::HeaderValue::from_str(&req.model) {
@@ -337,7 +339,8 @@ pub async fn handle_warmup(
                 .into_response();
 
             // 即使失败也添加响应头，以便监控
-            if let Ok(email_val) = axum::http::HeaderValue::from_str(&req.email) {
+            let masked = mask_email(&req.email);
+            if let Ok(email_val) = axum::http::HeaderValue::from_str(&masked) {
                 response.headers_mut().insert("X-Account-Email", email_val);
             }
             if let Ok(model_val) = axum::http::HeaderValue::from_str(&req.model) {

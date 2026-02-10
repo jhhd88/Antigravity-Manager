@@ -3157,7 +3157,6 @@ async fn admin_add_ip_to_blacklist(
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct RemoveIpRequest {
     ip_pattern: String,
 }
@@ -3182,7 +3181,7 @@ async fn admin_clear_ip_blacklist() -> Result<impl IntoResponse, (StatusCode, Js
     let entries = security_db::get_blacklist()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
     for entry in entries {
-        security_db::remove_from_blacklist(&entry.ip_pattern)
+        security_db::remove_from_blacklist(&entry.id)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
     }
     Ok(StatusCode::OK)

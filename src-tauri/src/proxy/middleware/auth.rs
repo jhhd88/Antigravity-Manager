@@ -210,8 +210,21 @@ async fn auth_middleware_internal(
                 }
             }
             Ok((false, reason)) => {
-                tracing::warn!("UserToken rejected: {:?}", reason);
-                Err(StatusCode::UNAUTHORIZED)
+                let reason_str = reason.unwrap_or_else(|| "Access denied".to_string());
+                tracing::warn!("UserToken rejected: {}", reason_str);
+                let body = serde_json::json!({
+                    "error": {
+                        "message": reason_str,
+                        "type": "token_rejected",
+                        "code": "token_rejected"
+                    }
+                });
+                let response = axum::response::Response::builder()
+                    .status(StatusCode::FORBIDDEN)
+                    .header("Content-Type", "application/json")
+                    .body(axum::body::Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap();
+                Ok(response)
             }
             Err(e) => {
                 tracing::error!("UserToken validation error: {}", e);

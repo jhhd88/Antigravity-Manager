@@ -368,6 +368,24 @@ response = client.chat.completions.create(
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v4.1.14 (2026-02-11)**:
+        -   **[安全加固] 全面安全审计修复 (18 项)**:
+            -   **配额保护绕过修复**: 重构 `normalize_to_standard_id` 为两阶段归一化，确保所有 ~40+ 模型别名（如 `claude-opus-4`、`claude-sonnet-4-5-20250929` 等）均纳入配额保护，彻底堵住通过变体名绕过的漏洞。
+            -   **404 重试风暴修复**: 将 HTTP 404 从可重试状态中移除，防止无效模型名触发账号池全量轮换导致耗尽。
+            -   **Gemini maxOutputTokens 上限**: 在 Gemini 原生路径中添加 65536 上限校验，与 OpenAI/Claude 路径保持一致。
+            -   **认证错误信息脱敏**: 客户端不再收到详细拒绝原因（如宵禁时间、IP 封锁等），统一返回通用提示。
+            -   **AES-GCM 随机 Nonce**: 引入 v2 加密格式，每次加密使用随机 12 字节 nonce，保持对旧数据的向后兼容解密。
+            -   **/internal/ 端点访问限制**: 仅允许回环地址（127.0.0.1、::1）和 Docker bridge 网段访问内部管理接口。
+            -   **X-Account-Email 脱敏**: 所有 HTTP 响应头中的邮箱地址统一通过 `mask_email()` 掩码处理（如 `us***@example.com`）。
+            -   **brew upgrade 并发保护**: 添加原子锁 + 5 分钟冷却机制，防止重复触发 Homebrew 升级。
+            -   **Mutex 死锁修复**: 修复 `account.rs` 中索引恢复流程的锁重入死锁问题。
+            -   **路径遍历防护**: 对 `account_id` 添加 UUID 格式校验，阻止 `../../etc/passwd` 等路径穿越攻击。
+            -   **备份文件轮转**: 损坏备份自动保留最新 5 个，防止磁盘空间无限增长。
+            -   **UTF-8 严格校验**: 索引文件解析从 `from_utf8_lossy` 升级为 `from_utf8`，损坏字节不再被静默替换。
+            -   **Claude Handler 修复**: 修复 `retried_without_thinking` 变量从未被赋值的逻辑错误。
+            -   **OpenAI Handler 优化**: 合并重复的 401/403 处理块，消除冗余逻辑。
+            -   **宵禁时间比较修复**: 使用 `chrono::NaiveTime` 替代字符串比较，避免时间格式不一致导致的误判。
+            -   **前端信息泄露修复**: MiniView 组件的 console.log 添加 DEV 环境守卫，邮箱 tooltip 改用掩码显示，版本号改为动态读取。
     *   **v4.1.13 (2026-02-10)**:
         -   **[核心功能] Homebrew Cask 安装检测与支持 (PR #1673)**:
             -   **应用升级**: 新增了对 Homebrew Cask 安装的检测逻辑。如果应用是通过 Cask 安装的，现在可以直接在应用内触发 `brew upgrade --cask` 流程，实现无缝升级体验。

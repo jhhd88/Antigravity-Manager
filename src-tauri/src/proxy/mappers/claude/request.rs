@@ -352,6 +352,20 @@ pub fn transform_claude_request_in(
     // This handles cases where context compression (kilo) incorrectly reorders blocks
     sort_thinking_blocks_first(&mut cleaned_req.messages);
 
+    // [FIX #1747] If thinking is auto-enabled by model default (e.g. Opus) but no
+    // ThinkingConfig was provided by the client, inject a default config with a budget
+    // to prevent 'thinking requires a budget' errors from upstream APIs.
+    if cleaned_req.thinking.is_none() && should_enable_thinking_by_default(&cleaned_req.model) {
+        tracing::info!(
+            "[Thinking-Mode] Injecting default ThinkingConfig (budget=10000) for model: {}",
+            cleaned_req.model
+        );
+        cleaned_req.thinking = Some(ThinkingConfig {
+            type_: "enabled".to_string(),
+            budget_tokens: Some(10000),
+        });
+    }
+
     let claude_req = &cleaned_req; // 后续使用清理后的请求
 
     // [NEW] Generate session ID for signature tracking

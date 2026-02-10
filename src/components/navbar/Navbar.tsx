@@ -109,8 +109,10 @@ function Navbar() {
             <div className="max-w-7xl mx-auto px-8 relative" style={{ zIndex: 10 }}>
                 {/* Flexbox 布局 - 子组件自己处理响应式 */}
                 <div className="flex items-center h-16 gap-4">
-                    {/* Logo - 自己处理响应式 */}
-                    <NavLogo />
+                    {/* Logo - 使用父容器宽度做响应式 */}
+                    <div className="@container/logo basis-[200px] shrink min-w-0">
+                        <NavLogo />
+                    </div>
 
                     {/* 导航菜单 - 自己处理响应式 */}
                     <div className="flex-1 flex justify-center">

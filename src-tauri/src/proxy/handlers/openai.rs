@@ -1674,7 +1674,7 @@ pub async fn handle_images_generations(
             for attempt in 0..max_attempts {
                 // 4.1 获取 Token
                 let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
-                    .get_token("image_gen", attempt > 0, None, "dall-e-3")
+                    .get_token("image_gen", attempt > 0, None, "gemini-3-pro-image")
                     .await
                 {
                     Ok(t) => t,
@@ -2071,7 +2071,7 @@ pub async fn handle_images_edits(
             for attempt in 0..max_attempts {
                 // 4.1 获取 Token
                 let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
-                    .get_token("image_gen", attempt > 0, None, "dall-e-3")
+                    .get_token("image_gen", attempt > 0, None, "gemini-3-pro-image")
                     .await
                 {
                     Ok(t) => t,

@@ -115,6 +115,9 @@ pub struct AccountSummary {
     pub disabled: bool,
     #[serde(default)]
     pub proxy_disabled: bool,
+    /// 受保护的模型列表 [NEW] 供 UI 显示锁定图标
+    #[serde(default, skip_serializing_if = "HashSet::is_empty")]
+    pub protected_models: HashSet<String>,
     pub created_at: i64,
     pub last_used: i64,
 }

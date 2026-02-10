@@ -8,7 +8,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
-use chrono::{Utc, Local, Timelike};
+use chrono::{Utc, Local, Timelike, FixedOffset};
 
 /// 用户令牌结构体
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -537,12 +537,14 @@ pub fn validate_token(token_str: &str, ip: &str) -> Result<(bool, Option<String>
         }
 
         // 3. 检查宵禁时间 (Curfew)
-        // 逻辑：如果当前服务器时间在 start 和 end 之间，则拒绝
+        // 逻辑：如果当前北京时间在 start 和 end 之间，则拒绝
         // 格式：HH:MM
+        // 使用固定 UTC+8 (北京时间)，不依赖服务器本地时区
         if let (Some(start_str), Some(end_str)) = (&token.curfew_start, &token.curfew_end) {
             if !start_str.is_empty() && !end_str.is_empty() {
-                let now = Local::now();
-                let current_time_str = format!("{:02}:{:02}", now.hour(), now.minute());
+                let beijing_offset = FixedOffset::east_opt(8 * 3600).unwrap();
+                let now_beijing = Utc::now().with_timezone(&beijing_offset);
+                let current_time_str = format!("{:02}:{:02}", now_beijing.hour(), now_beijing.minute());
 
                 // 跨午夜处理: start > end (e.g. 23:00 to 06:00)
                 // 正常: start < end (e.g. 09:00 to 18:00)
@@ -553,7 +555,7 @@ pub fn validate_token(token_str: &str, ip: &str) -> Result<(bool, Option<String>
                 };
 
                 if is_curfew {
-                     return Ok((false, Some(format!("Service is not available between {} and {} (Curfew enabled). Current server time: {}", start_str, end_str, current_time_str))));
+                     return Ok((false, Some(format!("Service is not available between {} and {} Beijing Time (Curfew enabled). Current Beijing time: {}", start_str, end_str, current_time_str))));
                 }
             }
         }

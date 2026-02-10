@@ -211,48 +211,30 @@ pub fn wrap_request(
                     }
                 }
             } else {
-                // ── Gemini 2.5 路径：保持原有 thinkingBudget 处理逻辑 ──
+                // ── Gemini 2.5 路径 ──
                 if let Some(budget_val) = thinking_config.get("thinkingBudget") {
                     if let Some(budget) = budget_val.as_u64() {
                         let tb_config = crate::proxy::config::get_thinking_budget_config();
                         let final_budget = match tb_config.mode {
-                            crate::proxy::config::ThinkingBudgetMode::Passthrough => {
-                                tracing::debug!(
-                                    "[Gemini-Wrap] Passthrough mode: keeping budget {} for model {}",
-                                    budget, final_model_name
-                                );
-                                budget
-                            }
+                            crate::proxy::config::ThinkingBudgetMode::Passthrough => budget,
                             crate::proxy::config::ThinkingBudgetMode::Custom => {
                                 let val = tb_config.custom_value as u64;
-                                let is_limited = (final_model_name.contains("gemini") || final_model_name.contains("thinking"))
+                                let is_limited = (final_model_name.contains("gemini")
+                                    || final_model_name.contains("thinking"))
                                     && !final_model_name.contains("-image");
 
                                 if is_limited && val > 24576 {
-                                    tracing::warn!(
-                                        "[Gemini-Wrap] Custom mode: capping thinking_budget from {} to 24576 for model {}",
-                                        val, final_model_name
-                                    );
                                     24576
                                 } else {
-                                    if val != budget {
-                                        tracing::debug!(
-                                            "[Gemini-Wrap] Custom mode: overriding {} with {} for model {}",
-                                            budget, val, final_model_name
-                                        );
-                                    }
                                     val
                                 }
                             }
                             crate::proxy::config::ThinkingBudgetMode::Auto => {
-                                let is_limited = (final_model_name.contains("gemini") || final_model_name.contains("thinking"))
+                                let is_limited = (final_model_name.contains("gemini")
+                                    || final_model_name.contains("thinking"))
                                     && !final_model_name.contains("-image");
 
                                 if is_limited && budget > 24576 {
-                                    tracing::info!(
-                                        "[Gemini-Wrap] Auto mode: capping thinking_budget from {} to 24576 for model {}",
-                                        budget, final_model_name
-                                    );
                                     24576
                                 } else {
                                     budget

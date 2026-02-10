@@ -57,9 +57,9 @@ export const BlacklistManager: React.FC<Props> = ({ refreshKey }) => {
 
             await invoke('add_ip_to_blacklist', {
                 request: {
-                    ip_pattern: newIp,
+                    ipPattern: newIp,
                     reason: newReason || null,
-                    expires_at: expiresAt
+                    expiresAt: expiresAt
                 }
             });
             setIsAddOpen(false);
@@ -85,7 +85,7 @@ export const BlacklistManager: React.FC<Props> = ({ refreshKey }) => {
         setEntries(prev => prev.filter(e => e.ip_pattern !== ipPattern));
 
         try {
-            await invoke('remove_ip_from_blacklist', { ip_pattern: ipPattern });
+            await invoke('remove_ip_from_blacklist', { ipPattern: ipPattern });
         } catch (e) {
             console.error('Failed to remove from blacklist', e);
             // 如果删除失败，重新加载数据恢复UI

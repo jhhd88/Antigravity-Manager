@@ -562,7 +562,7 @@ const UserToken: React.FC = () => {
                                 />
                             </div>
                             <label className="label">
-                                <span className="label-text-alt text-gray-500">{t('user_token.hint_curfew', { defaultValue: 'Leave empty to disable. Based on server time.' })}</span>
+                                <span className="label-text-alt text-gray-500">{t('user_token.hint_curfew', { defaultValue: 'Leave empty to disable. Based on Beijing time (UTC+8).' })}</span>
                             </label>
                         </div>
 
@@ -652,7 +652,7 @@ const UserToken: React.FC = () => {
                                 />
                             </div>
                             <label className="label">
-                                <span className="label-text-alt text-gray-500">{t('user_token.hint_curfew', { defaultValue: 'Leave empty to disable. Based on server time.' })}</span>
+                                <span className="label-text-alt text-gray-500">{t('user_token.hint_curfew', { defaultValue: 'Leave empty to disable. Based on Beijing time (UTC+8).' })}</span>
                             </label>
                         </div>
 

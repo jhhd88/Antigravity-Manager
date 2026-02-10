@@ -1,4 +1,5 @@
 import daisyui from "daisyui";
+import containerQueries from "@tailwindcss/container-queries";
 
 /** @type {import('tailwindcss').Config} */
 export default {
@@ -10,7 +11,7 @@ export default {
     theme: {
         extend: {},
     },
-    plugins: [daisyui],
+    plugins: [daisyui, containerQueries],
     daisyui: {
         themes: [
             {

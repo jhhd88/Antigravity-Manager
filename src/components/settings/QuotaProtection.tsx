@@ -12,9 +12,9 @@ const QuotaProtection = ({ config, onChange }: QuotaProtectionProps) => {
 
     const handleEnabledChange = (enabled: boolean) => {
         let newConfig = { ...config, enabled };
-        // 如果开启保护且勾选列表为空，则默认勾选 claude-sonnet-4-5
+        // 如果开启保护且勾选列表为空，则默认勾选 claude
         if (enabled && (!config.monitored_models || config.monitored_models.length === 0)) {
-            newConfig.monitored_models = ['claude-sonnet-4-5'];
+            newConfig.monitored_models = ['claude'];
         }
         onChange(newConfig);
     };
@@ -43,7 +43,7 @@ const QuotaProtection = ({ config, onChange }: QuotaProtectionProps) => {
     const monitoredModelsOptions = [
         { id: 'gemini-3-flash', label: 'Gemini 3 Flash' },
         { id: 'gemini-3-pro-high', label: 'Gemini 3 Pro High' },
-        { id: 'claude-sonnet-4-5', label: 'Claude 4.5 Sonnet' },
+        { id: 'claude', label: 'Claude 4.6 Opus Thinking' },
         { id: 'gemini-3-pro-image', label: 'Gemini 3 Pro Image' }
     ];
 

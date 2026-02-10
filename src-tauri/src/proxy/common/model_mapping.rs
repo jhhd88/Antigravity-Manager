@@ -6,7 +6,6 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     let mut m = HashMap::new();
 
     // 直接支持的模型
-    m.insert("claude-opus-4-5-thinking", "claude-opus-4-5-thinking");
     m.insert("claude-sonnet-4-5", "claude-sonnet-4-5");
     m.insert("claude-sonnet-4-5-thinking", "claude-sonnet-4-5-thinking");
 
@@ -14,10 +13,12 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("claude-sonnet-4-5-20250929", "claude-sonnet-4-5-thinking");
     m.insert("claude-3-5-sonnet-20241022", "claude-sonnet-4-5");
     m.insert("claude-3-5-sonnet-20240620", "claude-sonnet-4-5");
-    m.insert("claude-opus-4", "claude-opus-4-5-thinking");
-    m.insert("claude-opus-4-5-20251101", "claude-opus-4-5-thinking");
+    // [Redirect] Opus 4.5 -> Opus 4.6 (Issue #1743)
+    m.insert("claude-opus-4", "claude-opus-4-6-thinking");
+    m.insert("claude-opus-4-5-thinking", "claude-opus-4-6-thinking");
+    m.insert("claude-opus-4-5-20251101", "claude-opus-4-6-thinking");
 
-    // Claude Opus 4.6 (nuevo modelo thinking)
+    // Claude Opus 4.6
     m.insert("claude-opus-4-6-thinking", "claude-opus-4-6-thinking");
     m.insert("claude-opus-4-6", "claude-opus-4-6-thinking");
     m.insert("claude-opus-4-6-20260201", "claude-opus-4-6-thinking");
@@ -270,35 +271,25 @@ pub fn resolve_model_route(
 /// 
 /// Returns `None` if the model doesn't match any of the 3 protected categories.
 pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
-    // [FIX] Strict matching based on user-defined groups (Case Insensitive)
     let lower = model_name.to_lowercase();
     
-    // Group 1: Gemini 3 Flash
-    if lower.contains("gemini") && (lower.contains("flash") || lower.contains("lite")) {
-        return Some("gemini-3-flash".to_string());
-    }
-
-    // Group 2: Gemini 3 Pro High
-    if lower.contains("gemini") && lower.contains("pro") {
-        return Some("gemini-3-pro-high".to_string());
-    }
-
-    // [High-End Isolation] Opus 4.6 should NOT be normalized to Sonnet 4.5
-    // This allows specific capability check for "claude-opus-4-6-thinking"
-    if lower.contains("claude-opus-4-6") {
-        return None;
-    }
-
-    // Group 3: Claude 4.5 Sonnet (includes Opus etc. assigned to this bucket)
-    if lower.contains("claude") || lower.contains("sonnet") || lower.contains("opus") {
-        return Some("claude-sonnet-4-5".to_string());
-    }
-
-    // [Fallback] Explicit matching (Backward Compatibility)
     match lower.as_str() {
+        // 1. gemini-3-pro-image (严格匹配)
+        "gemini-3-pro-image" => Some("gemini-3-pro-image".to_string()),
+
+        // 2. gemini-3-flash (严格匹配)
         "gemini-3-flash" => Some("gemini-3-flash".to_string()),
-        "gemini-3-pro-high" | "gemini-3-pro-low" | "gemini-3-pro-preview" | "gemini-3-pro-image" => Some("gemini-3-pro-high".to_string()),
-        "claude-sonnet-4-5" | "claude-sonnet-4-5-thinking" | "claude-opus-4-5-thinking" => Some("claude-sonnet-4-5".to_string()),
+
+        // 3. gemini-3-pro-high (含 Pro High 和 Pro Low)
+        "gemini-3-pro-high" | "gemini-3-pro-low" => Some("gemini-3-pro-high".to_string()),
+
+        // 4. Claude 4.6 系列 (严格名单匹配)
+        "claude-opus-4-6-thinking" |
+        "claude-opus-4-5-thinking" |
+        "claude-sonnet-4-5-thinking" |
+        "claude-sonnet-4-5" |
+        "claude" => Some("claude".to_string()),
+
         _ => None
     }
 }
@@ -315,7 +306,7 @@ mod tests {
         );
         assert_eq!(
             map_claude_model_to_gemini("claude-opus-4"),
-            "claude-opus-4-5-thinking"
+            "claude-opus-4-6-thinking"
         );
         // Test gemini pass-through (should not be caught by "mini" rule)
         assert_eq!(
@@ -326,12 +317,22 @@ mod tests {
             map_claude_model_to_gemini("unknown-model"),
             "unknown-model"
         );
-        
-        // Test Normalization Exception
-        assert_eq!(normalize_to_standard_id("claude-opus-4-6-thinking"), None);
+
+        // Test Normalization (Opus 4.6 now merged into "claude" group)
+        assert_eq!(normalize_to_standard_id("claude-opus-4-6-thinking"), Some("claude".to_string()));
         assert_eq!(
-            normalize_to_standard_id("claude-sonnet-4-5"), 
-            Some("claude-sonnet-4-5".to_string())
+            normalize_to_standard_id("claude-sonnet-4-5"),
+            Some("claude".to_string())
+        );
+
+        // [Regression] gemini-3-pro-image must NOT be grouped with gemini-3-pro-high
+        assert_eq!(
+            normalize_to_standard_id("gemini-3-pro-image"),
+            Some("gemini-3-pro-image".to_string())
+        );
+        assert_eq!(
+            normalize_to_standard_id("gemini-3-pro-high"),
+            Some("gemini-3-pro-high".to_string())
         );
     }
 

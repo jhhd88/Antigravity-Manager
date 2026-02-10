@@ -475,7 +475,7 @@ export default function ApiProxy() {
                 "o1-*": "gemini-3-pro-high",
                 "o3-*": "gemini-3-pro-high",
                 "claude-3-5-sonnet-*": "claude-sonnet-4-5",
-                "claude-3-opus-*": "claude-opus-4-5-thinking",
+                "claude-3-opus-*": "claude-opus-4-6-thinking",
                 "claude-opus-4-5*": "claude-opus-4-5-thinking",
                 "claude-opus-4-6*": "claude-opus-4-6-thinking",
                 "claude-haiku-*": "gemini-2.5-flash",
@@ -487,13 +487,13 @@ export default function ApiProxy() {
             name: t('proxy.router.preset_performance'),
             description: t('proxy.router.preset_performance_desc'),
             mappings: {
-                "gpt-4*": "claude-opus-4-5-thinking",
+                "gpt-4*": "claude-opus-4-6-thinking",
                 "gpt-4o*": "claude-sonnet-4-5",
                 "gpt-3.5*": "gemini-3-flash",
-                "o1-*": "claude-opus-4-5-thinking",
-                "o3-*": "claude-opus-4-5-thinking",
+                "o1-*": "claude-opus-4-6-thinking",
+                "o3-*": "claude-opus-4-6-thinking",
                 "claude-3-5-sonnet-*": "claude-sonnet-4-5",
-                "claude-3-opus-*": "claude-opus-4-5-thinking",
+                "claude-3-opus-*": "claude-opus-4-6-thinking",
                 "claude-opus-4-5*": "claude-opus-4-5-thinking",
                 "claude-opus-4-6*": "claude-opus-4-6-thinking",
                 "claude-haiku-*": "claude-sonnet-4-5",
@@ -2292,8 +2292,8 @@ print(response.text)`;
                                                 <ArrowRight size={14} /> {t('proxy.router.custom_mappings')}
                                             </h3>
                                             <p className="text-[9px] text-gray-500 dark:text-gray-400 leading-relaxed">
-                                                💡 支持手动输入任意模型 ID,可体验未发布模型(如 <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-blue-600 dark:text-blue-400">claude-opus-4-6</code>)。
-                                                <span className="text-amber-600 dark:text-amber-400">注意:并非所有账号都支持未发布模型</span>
+                                                {t('proxy.router.custom_mapping_tip')}
+                                                <span className="text-amber-600 dark:text-amber-400">{t('proxy.router.custom_mapping_warning')}</span>
                                             </p>
                                         </div>
                                     </div>

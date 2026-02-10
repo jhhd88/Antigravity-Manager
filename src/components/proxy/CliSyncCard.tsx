@@ -97,8 +97,8 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
     const getFormattedProxyUrl = useCallback((app: CliAppType) => {
         if (!proxyUrl) return '';
         const base = proxyUrl.trimEnd().replace(/\/+$/, '');
-        // Codex (OpenAI 协议) 通常需要带 /v1
-        if (app === 'Codex') {
+        // Codex & OpenCode (OpenAI 协议) 通常需要带 /v1
+        if (app === 'Codex' || app === 'OpenCode') {
             return base.endsWith('/v1') ? base : `${base}/v1`;
         }
         // Claude 和 Gemini 的 SDK 通常会自动处理版本路径或不需要 /v1

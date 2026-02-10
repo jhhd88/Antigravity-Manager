@@ -189,7 +189,7 @@ impl RateLimitTracker {
         backoff_steps: &[u64], // [NEW] 传入退避配置
     ) -> Option<RateLimitInfo> {
         // 支持 429 (限流) 以及 500/503/529 (后端故障软避让)
-        if status != 429 && status != 500 && status != 503 && status != 529 {
+        if status != 429 && status != 500 && status != 503 && status != 529 && status != 404 {
             return None;
         }
         
@@ -197,6 +197,9 @@ impl RateLimitTracker {
         let reason = if status == 429 {
             tracing::warn!("Google 429 Error Body: {}", body);
             self.parse_rate_limit_reason(body)
+        } else if status == 404 {
+            tracing::warn!("Google 404: model unavailable on this account, short lockout before rotation");
+            RateLimitReason::ServerError
         } else {
             RateLimitReason::ServerError
         };
@@ -278,9 +281,9 @@ impl RateLimitTracker {
                         lockout
                     },
                     RateLimitReason::ServerError => {
-                        // 5xx 错误
-                        tracing::warn!("检测到 5xx 错误 ({}), 执行 8s 软避让...", status);
-                        8
+                        let lockout = if status == 404 { 5 } else { 8 };
+                        tracing::warn!("检测到 {} 错误, 执行 {}s 软避让...", status, lockout);
+                        lockout
                     },
                     RateLimitReason::Unknown => {
                         // 未知原因

@@ -1,5 +1,5 @@
 {
-  "version": "4.1.11",
+  "version": "4.1.13",
   "name": "antigravity-tools",
   "type": "module",
   "private": true,
@@ -48,6 +48,7 @@
     "zustand": "^5.0.9"
   },
   "devDependencies": {
+    "@tailwindcss/container-queries": "^0.1.1",
     "@tauri-apps/cli": "^2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",

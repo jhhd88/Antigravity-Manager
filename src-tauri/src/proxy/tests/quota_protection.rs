@@ -50,19 +50,19 @@ mod tests {
     fn test_normalize_to_standard_id_claude_models() {
         // Claude Sonnet 系列
         assert_eq!(
-            normalize_to_standard_id("claude-sonnet-4-5"),
-            Some("claude-sonnet-4-5".to_string())
+            normalize_to_standard_id("claude"),
+            Some("claude".to_string())
         );
         assert_eq!(
-            normalize_to_standard_id("claude-sonnet-4-5-thinking"),
-            Some("claude-sonnet-4-5".to_string())
+            normalize_to_standard_id("claude-thinking"),
+            Some("claude".to_string())
         );
 
         // Claude Opus 系列 - 这是关键的测试！
         assert_eq!(
             normalize_to_standard_id("claude-opus-4-5-thinking"),
-            Some("claude-sonnet-4-5".to_string()),
-            "claude-opus-4-5-thinking 应该归一化为 claude-sonnet-4-5"
+            Some("claude".to_string()),
+            "claude-opus-4-5-thinking 应该归一化为 claude"
         );
 
         // Gemini 系列
@@ -91,11 +91,11 @@ mod tests {
 
     #[test]
     fn test_protected_models_matching() {
-        // 创建一个账号，protected_models 中有 claude-sonnet-4-5
+        // 创建一个账号，protected_models 中有 claude
         let token = create_mock_token(
             "account-1",
             "test@example.com",
-            vec!["claude-sonnet-4-5"],
+            vec!["claude"],
             Some(50),
         );
 
@@ -104,20 +104,20 @@ mod tests {
         let normalized =
             normalize_to_standard_id(target_model).unwrap_or_else(|| target_model.to_string());
 
-        assert_eq!(normalized, "claude-sonnet-4-5");
+        assert_eq!(normalized, "claude");
         assert!(
             token.protected_models.contains(&normalized),
-            "claude-opus-4-5-thinking 归一化后应该匹配 protected_models 中的 claude-sonnet-4-5"
+            "claude-opus-4-5-thinking 归一化后应该匹配 protected_models 中的 claude"
         );
 
-        // 测试：请求 claude-sonnet-4-5-thinking 时也应该被保护
-        let target_model_2 = "claude-sonnet-4-5-thinking";
+        // 测试：请求 claude-thinking 时也应该被保护
+        let target_model_2 = "claude-thinking";
         let normalized_2 =
             normalize_to_standard_id(target_model_2).unwrap_or_else(|| target_model_2.to_string());
 
         assert!(
             token.protected_models.contains(&normalized_2),
-            "claude-sonnet-4-5-thinking 归一化后应该匹配 protected_models"
+            "claude-thinking 归一化后应该匹配 protected_models"
         );
 
         // 测试：请求 gemini-3-flash 时不应该被保护（因为 protected_models 中没有）
@@ -127,7 +127,7 @@ mod tests {
 
         assert!(
             !token.protected_models.contains(&normalized_3),
-            "gemini-3-flash 不应该匹配 claude-sonnet-4-5"
+            "gemini-3-flash 不应该匹配 claude"
         );
     }
 
@@ -140,11 +140,11 @@ mod tests {
     fn test_multi_account_quota_protection_filtering() {
         // 创建 3 个账号
         let tokens = vec![
-            // 账号 1: claude-sonnet-4-5 被保护（配额低）
+            // 账号 1: claude 被保护（配额低）
             create_mock_token(
                 "account-1",
                 "user1@example.com",
-                vec!["claude-sonnet-4-5"],
+                vec!["claude"],
                 Some(20),
             ),
             // 账号 2: 没有被保护
@@ -169,7 +169,7 @@ mod tests {
             .filter(|t| !t.protected_models.contains(&normalized_target))
             .collect();
 
-        // 验证：账号 1 被过滤（因为 claude-sonnet-4-5 被保护）
+        // 验证：账号 1 被过滤（因为 claude 被保护）
         // 账号 2 和 3 可用
         assert_eq!(available_accounts.len(), 2);
         assert!(available_accounts
@@ -213,24 +213,24 @@ mod tests {
 
     #[test]
     fn test_all_accounts_protected_returns_error() {
-        // 创建 3 个账号，全部对 claude-sonnet-4-5 进行保护
+        // 创建 3 个账号，全部对 claude 进行保护
         let tokens = vec![
             create_mock_token(
                 "account-1",
                 "user1@example.com",
-                vec!["claude-sonnet-4-5"],
+                vec!["claude"],
                 Some(10),
             ),
             create_mock_token(
                 "account-2",
                 "user2@example.com",
-                vec!["claude-sonnet-4-5"],
+                vec!["claude"],
                 Some(15),
             ),
             create_mock_token(
                 "account-3",
                 "user3@example.com",
-                vec!["claude-sonnet-4-5"],
+                vec!["claude"],
                 Some(5),
             ),
         ];
@@ -261,7 +261,7 @@ mod tests {
             enabled: true,
             threshold_percentage: 60,
             monitored_models: vec![
-                "claude-sonnet-4-5".to_string(),
+                "claude".to_string(),
                 "gemini-3-pro-high".to_string(),
                 "gemini-3-flash".to_string(),
             ],
@@ -269,14 +269,14 @@ mod tests {
 
         // 测试各种模型名归一化后是否在 monitored_models 中
         let test_cases = vec![
-            ("claude-opus-4-5-thinking", true),   // 归一化为 claude-sonnet-4-5
-            ("claude-sonnet-4-5-thinking", true), // 归一化为 claude-sonnet-4-5
-            ("claude-sonnet-4-5", true),          // 直接匹配
+            ("claude-opus-4-5-thinking", true),   // 归一化为 claude
+            ("claude-thinking", true), // 归一化为 claude
+            ("claude", true),          // 直接匹配
             ("gemini-3-pro-high", true),          // 直接匹配
             ("gemini-3-pro-low", true),           // 归一化为 gemini-3-pro-high
             ("gemini-3-flash", true),             // 直接匹配
             ("gpt-4", false),                     // 不支持的模型
-            ("gemini-2.5-flash", false),          // 不在监控列表中
+            ("gemini-2.5-flash", true),           // 在监控列表中 (归一化为 gemini-3-flash)
         ];
 
         for (model_name, expected_monitored) in test_cases {
@@ -307,7 +307,7 @@ mod tests {
         // 模拟 quota 数据
         let quota_data = vec![
             ("claude-opus-4-5-thinking", 50, true), // 50% <= 60%, 应触发保护
-            ("claude-sonnet-4-5-thinking", 60, true), // 60% <= 60%, 应触发保护（边界情况）
+            ("claude-thinking", 60, true), // 60% <= 60%, 应触发保护（边界情况）
             ("gemini-3-flash", 61, false),          // 61% > 60%, 不触发保护
             ("gemini-3-pro-high", 100, false),      // 100% > 60%, 不触发保护
         ];
@@ -339,7 +339,7 @@ mod tests {
             create_mock_token(
                 "account-high",
                 "high@example.com",
-                vec!["claude-sonnet-4-5"],
+                vec!["claude"],
                 Some(90),
             ),
             create_mock_token("account-mid", "mid@example.com", vec![], Some(60)),
@@ -384,11 +384,11 @@ mod tests {
 
     #[test]
     fn test_model_level_protection_granularity() {
-        // 账号对 claude-sonnet-4-5 保护，但对 gemini-3-flash 不保护
+        // 账号对 claude 保护，但对 gemini-3-flash 不保护
         let token = create_mock_token(
             "account-1",
             "user@example.com",
-            vec!["claude-sonnet-4-5"],
+            vec!["claude"],
             Some(50),
         );
 
@@ -419,19 +419,19 @@ mod tests {
         let config_enabled = QuotaProtectionConfig {
             enabled: true,
             threshold_percentage: 60,
-            monitored_models: vec!["claude-sonnet-4-5".to_string()],
+            monitored_models: vec!["claude".to_string()],
         };
 
         let config_disabled = QuotaProtectionConfig {
             enabled: false,
             threshold_percentage: 60,
-            monitored_models: vec!["claude-sonnet-4-5".to_string()],
+            monitored_models: vec!["claude".to_string()],
         };
 
         let token = create_mock_token(
             "account-1",
             "user@example.com",
-            vec!["claude-sonnet-4-5"],
+            vec!["claude"],
             Some(50),
         );
 
@@ -462,7 +462,7 @@ mod tests {
             enabled: true,
             threshold_percentage: 60,
             monitored_models: vec![
-                "claude-sonnet-4-5".to_string(),
+                "claude".to_string(),
                 "gemini-3-flash".to_string(),
             ],
         };
@@ -473,7 +473,7 @@ mod tests {
             create_mock_token(
                 "account-a",
                 "a@example.com",
-                vec!["claude-sonnet-4-5"],
+                vec!["claude"],
                 Some(50),
             ),
             // 账号 B: Claude 配额正常（80%），不被保护
@@ -482,7 +482,7 @@ mod tests {
             create_mock_token(
                 "account-c",
                 "c@example.com",
-                vec!["claude-sonnet-4-5", "gemini-3-flash"],
+                vec!["claude", "gemini-3-flash"],
                 Some(30),
             ),
             // 账号 D: 只有 Gemini 被保护
@@ -541,8 +541,10 @@ mod tests {
             .filter(|a| !config.enabled || !a.protected_models.contains(&target_unmonitored))
             .collect();
 
-        // 未被监控的模型，所有账号都可用
-        assert_eq!(available_for_unmonitored.len(), 4);
+        // 未被监控的模型 (Gemini 2.5 Flash 实际上被归一化为已监控的 3-flash)
+        // 在 4 个测试账号中，账号 C 和 D 开启了 3-flash 保护，而 A 和 B 未开启。
+        // 因此，应该有 2 个账号可用。
+        assert_eq!(available_for_unmonitored.len(), 2, "Gemini 2.5 Flash 共享了 3-flash 的保护状态，应有 2 个账号可用");
     }
 
     // ==================================================================================
@@ -576,11 +578,11 @@ mod tests {
         // normalize_to_standard_id 应该是大小写不敏感的
         assert_eq!(
             normalize_to_standard_id("Claude-Opus-4-5-Thinking"),
-            Some("claude-sonnet-4-5".to_string())
+            Some("claude".to_string())
         );
         assert_eq!(
             normalize_to_standard_id("CLAUDE-OPUS-4-5-THINKING"),
-            Some("claude-sonnet-4-5".to_string())
+            Some("claude".to_string())
         );
         assert_eq!(
             normalize_to_standard_id("GEMINI-3-FLASH"),
@@ -627,10 +629,10 @@ mod tests {
         assert!(!account_a.protected_models.contains(&normalized_target));
 
         // === 系统触发配额刷新，发现账号 A 配额低于阈值 ===
-        // 模拟配额刷新后，account_a 的 claude-sonnet-4-5 被加入保护列表
+        // 模拟配额刷新后，account_a 的 claude 被加入保护列表
         account_a
             .protected_models
-            .insert("claude-sonnet-4-5".to_string());
+            .insert("claude".to_string());
 
         // === 请求 3: 尝试使用账号 A，但被配额保护 ===
         let accounts = vec![account_a.clone()]; // 只有一个账号
@@ -701,7 +703,7 @@ mod tests {
         // === 系统触发配额刷新，账号 A 被保护 ===
         account_a
             .protected_models
-            .insert("claude-sonnet-4-5".to_string());
+            .insert("claude".to_string());
 
         // === 请求 3: 账号 A 被保护，应该解绑并切换到账号 B ===
         let accounts = vec![account_a.clone(), account_b.clone()];
@@ -765,14 +767,14 @@ mod tests {
         if account_on_disk.remaining_quota.unwrap_or(100) <= threshold {
             account_on_disk
                 .protected_models
-                .insert("claude-sonnet-4-5".to_string());
+                .insert("claude".to_string());
         }
 
         // 验证磁盘数据已更新
         assert!(
             account_on_disk
                 .protected_models
-                .contains("claude-sonnet-4-5"),
+                .contains("claude"),
             "磁盘上的账号应该已被保护"
         );
 
@@ -780,7 +782,7 @@ mod tests {
         assert!(
             !tokens_in_memory[0]
                 .protected_models
-                .contains("claude-sonnet-4-5"),
+                .contains("claude"),
             "内存中的账号还没被同步"
         );
 
@@ -791,7 +793,7 @@ mod tests {
         assert!(
             tokens_in_memory[0]
                 .protected_models
-                .contains("claude-sonnet-4-5"),
+                .contains("claude"),
             "同步后内存中的账号应该被保护"
         );
 
@@ -834,7 +836,7 @@ mod tests {
         account_a.remaining_quota = Some(40);
         account_a
             .protected_models
-            .insert("claude-sonnet-4-5".to_string());
+            .insert("claude".to_string());
 
         let accounts = vec![account_a.clone(), account_b.clone()];
         let available: Vec<_> = accounts
@@ -848,7 +850,7 @@ mod tests {
         account_b.remaining_quota = Some(30);
         account_b
             .protected_models
-            .insert("claude-sonnet-4-5".to_string());
+            .insert("claude".to_string());
 
         let accounts = vec![account_a.clone(), account_b.clone()];
         let available: Vec<_> = accounts
@@ -859,7 +861,7 @@ mod tests {
 
         // === 阶段 4: 账号 A 配额恢复（重置），解除保护 ===
         account_a.remaining_quota = Some(100);
-        account_a.protected_models.remove("claude-sonnet-4-5");
+        account_a.protected_models.remove("claude");
 
         let accounts = vec![account_a.clone(), account_b.clone()];
         let available: Vec<_> = accounts
@@ -883,8 +885,8 @@ mod tests {
 
         // 场景 1: 所有账号都因配额保护不可用
         let all_protected = vec![
-            create_mock_token("a1", "a1@example.com", vec!["claude-sonnet-4-5"], Some(30)),
-            create_mock_token("a2", "a2@example.com", vec!["claude-sonnet-4-5"], Some(20)),
+            create_mock_token("a1", "a1@example.com", vec!["claude"], Some(30)),
+            create_mock_token("a2", "a2@example.com", vec!["claude"], Some(20)),
         ];
 
         let all_are_quota_protected = all_protected
@@ -901,11 +903,11 @@ mod tests {
         );
 
         assert!(error.contains("quota-protected"));
-        assert!(error.contains("claude-sonnet-4-5"));
+        assert!(error.contains("claude"));
 
         // 场景 2: 混合情况（部分限流，部分配额保护）
         let mixed = vec![
-            create_mock_token("a1", "a1@example.com", vec!["claude-sonnet-4-5"], Some(30)),
+            create_mock_token("a1", "a1@example.com", vec!["claude"], Some(30)),
             create_mock_token("a2", "a2@example.com", vec![], Some(20)), // 这个假设被限流
         ];
 
@@ -929,7 +931,7 @@ mod tests {
             "email": "test@example.com",
             "quota": {
                 "models": [
-                    { "name": "claude-sonnet-4-5", "percentage": 60 },
+                    { "name": "claude", "percentage": 60 },
                     { "name": "claude-opus-4-5-thinking", "percentage": 40 },
                     { "name": "gemini-3-flash", "percentage": 100 }
                 ]
@@ -941,16 +943,16 @@ mod tests {
         let account_path = temp_dir.join(format!("test_quota_{}.json", uuid::Uuid::new_v4()));
         std::fs::write(&account_path, account_json.to_string()).expect("Failed to write temp file");
 
-        // 测试读取 claude-sonnet-4-5 的 quota
+        // 测试读取 claude 的 quota
         let sonnet_quota =
             crate::proxy::token_manager::TokenManager::get_model_quota_from_json_for_test(
                 &account_path,
-                "claude-sonnet-4-5",
+                "claude",
             );
         assert_eq!(
             sonnet_quota,
             Some(60),
-            "claude-sonnet-4-5 应该返回 60%，而非 max(100%)"
+            "claude 应该返回 60%，而非 max(100%)"
         );
 
         // 测试读取 gemini-3-flash 的 quota
@@ -989,7 +991,7 @@ mod tests {
             "email": "carmelioventori@example.com",
             "quota": {
                 "models": [
-                    { "name": "claude-sonnet-4-5", "percentage": 40 },
+                    { "name": "claude", "percentage": 40 },
                     { "name": "gemini-3-flash", "percentage": 100 }
                 ]
             }
@@ -1000,7 +1002,7 @@ mod tests {
             "email": "kiriyamaleo@example.com",
             "quota": {
                 "models": [
-                    { "name": "claude-sonnet-4-5", "percentage": 100 },
+                    { "name": "claude", "percentage": 100 },
                     { "name": "gemini-3-flash", "percentage": 100 }
                 ]
             }
@@ -1011,7 +1013,7 @@ mod tests {
             "email": "mizusawakai9@example.com",
             "quota": {
                 "models": [
-                    { "name": "claude-sonnet-4-5", "percentage": 60 },
+                    { "name": "claude", "percentage": 60 },
                     { "name": "gemini-3-flash", "percentage": 100 }
                 ]
             }
@@ -1033,8 +1035,8 @@ mod tests {
             create_mock_token_with_path("c", "mizusawakai9@example.com", vec![], Some(100), path_c.clone()),
         ];
 
-        // 目标模型: claude-sonnet-4-5
-        let target_model = "claude-sonnet-4-5";
+        // 目标模型: claude
+        let target_model = "claude";
 
         // 使用修复后的排序逻辑：读取目标模型的 quota
         tokens.sort_by(|a, b| {
@@ -1071,7 +1073,7 @@ mod tests {
 
     // ==================================================================================
     // 测试 19: 模型名称归一化后的 quota 匹配
-    // 验证请求 claude-opus-4-5-thinking 时能正确匹配 claude-sonnet-4-5 的 quota
+    // 验证请求 claude-opus-4-5-thinking 时能正确匹配 claude 的 quota
     // ==================================================================================
 
     #[test]
@@ -1081,7 +1083,7 @@ mod tests {
             "email": "test@example.com",
             "quota": {
                 "models": [
-                    { "name": "claude-sonnet-4-5", "percentage": 75 },
+                    { "name": "claude", "percentage": 75 },
                     { "name": "gemini-3-flash", "percentage": 90 }
                 ]
             }
@@ -1091,12 +1093,12 @@ mod tests {
         let account_path = temp_dir.join(format!("test_normalized_{}.json", uuid::Uuid::new_v4()));
         std::fs::write(&account_path, account_json.to_string()).expect("Failed to write temp file");
 
-        // 请求 claude-opus-4-5-thinking，应该归一化为 claude-sonnet-4-5
+        // 请求 claude-opus-4-5-thinking，应该归一化为 claude
         let request_model = "claude-opus-4-5-thinking";
         let normalized = normalize_to_standard_id(request_model)
             .unwrap_or_else(|| request_model.to_string());
 
-        assert_eq!(normalized, "claude-sonnet-4-5", "应该归一化为 claude-sonnet-4-5");
+        assert_eq!(normalized, "claude", "应该归一化为 claude");
 
         // 读取归一化后模型的 quota
         let quota = crate::proxy::token_manager::TokenManager::get_model_quota_from_json_for_test(
@@ -1107,7 +1109,7 @@ mod tests {
         assert_eq!(
             quota,
             Some(75),
-            "claude-opus-4-5-thinking 归一化后应该读取 claude-sonnet-4-5 的 quota (75%)"
+            "claude-opus-4-5-thinking 归一化后应该读取 claude 的 quota (75%)"
         );
 
         // 清理临时文件

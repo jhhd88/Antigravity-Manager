@@ -5,6 +5,7 @@ use crate::modules::security_db;
 // ==================== 请求/响应结构 ====================
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IpAccessLogQuery {
     pub page: usize,
     pub page_size: usize,
@@ -19,6 +20,7 @@ pub struct IpAccessLogResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AddBlacklistRequest {
     pub ip_pattern: String,
     pub reason: Option<String>,
@@ -26,6 +28,7 @@ pub struct AddBlacklistRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AddWhitelistRequest {
     pub ip_pattern: String,
     pub description: Option<String>,

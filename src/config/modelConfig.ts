@@ -35,7 +35,7 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
     'gemini-3-pro-image': {
         label: 'Gemini 3 Image',
         shortLabel: 'G3 Image',
-        protectedKey: 'gemini-pro-image',
+        protectedKey: 'gemini-3-pro-image',
         Icon: Gemini.Color,
     },
     'gemini-3-pro-low': {
@@ -73,21 +73,15 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
 
     // Claude 系列
     'claude-sonnet-4-5': {
-        label: 'Claude 4.5 Sonnet',
-        shortLabel: 'Claude 4.5',
-        protectedKey: 'claude-sonnet',
+        label: 'Claude 4.6 TK',
+        shortLabel: 'Claude 4.6',
+        protectedKey: 'claude',
         Icon: Claude.Color,
     },
     'claude-sonnet-4-5-thinking': {
-        label: 'Claude 4.5 Sonnet Think',
-        shortLabel: 'Claude 4.5 Tk',
-        protectedKey: 'claude-sonnet',
-        Icon: Claude.Color,
-    },
-    'claude-opus-4-5-thinking': {
-        label: 'Claude 4.5 Opus Think',
-        shortLabel: 'Claude 4.5 Op',
-        protectedKey: 'claude-opus',
+        label: 'Claude 4.6 TK Thinking',
+        shortLabel: 'Claude 4.6 TK',
+        protectedKey: 'claude',
         Icon: Claude.Color,
     },
     'claude-opus-4-6-thinking': {

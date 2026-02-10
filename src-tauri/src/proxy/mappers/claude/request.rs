@@ -1724,6 +1724,15 @@ fn build_generation_config(
     is_thinking_enabled: bool,
 ) -> Value {
     let mut config = json!({});
+    let model_lower = mapped_model.to_lowercase();
+
+    // [FIX] 检测模型是否使用 Gemini 3.0 API 参数格式
+    // Gemini 3.0 系列和 Claude Opus 4.6 使用 thinkingLevel (枚举) 而非 thinkingBudget (整数)
+    // 两者绝不能同时发送，否则返回 400 INVALID_ARGUMENT
+    // 参考: https://help.apiyi.com/en/gemini-api-thinking-budget-level-error-fix-en.html
+    let uses_thinking_level = model_lower.contains("gemini-3")
+        || model_lower.contains("claude-opus-4-6")
+        || model_lower.contains("claude-opus-4.6");
 
     // Thinking 配置
     if is_thinking_enabled {
@@ -1734,44 +1743,65 @@ fn build_generation_config(
             .and_then(|t| t.budget_tokens)
             .unwrap_or(16000);
 
-        let tb_config = crate::proxy::config::get_thinking_budget_config();
-        let budget = match tb_config.mode {
-            crate::proxy::config::ThinkingBudgetMode::Passthrough => budget_tokens,
-            crate::proxy::config::ThinkingBudgetMode::Custom => {
-                let mut custom_value = tb_config.custom_value;
-                // [FIX #1602] 针对 Gemini 系列模型，在自定义模式下也强制执行 24576 上限
-                let model_lower = mapped_model.to_lowercase();
-                let is_gemini_limited = (model_lower.contains("gemini") && !model_lower.contains("-image"))
-                    || model_lower.contains("flash")
-                    || model_lower.ends_with("-thinking");
+        if uses_thinking_level {
+            // [Gemini 3.0 / Claude Opus 4.6] 使用 thinkingLevel 枚举
+            // 优先从 output_config.effort 映射 (语义完全匹配)
+            // 否则从 budget_tokens 数值推导等级
+            let level = if let Some(effort) = claude_req.output_config.as_ref().and_then(|c| c.effort.as_ref()) {
+                match effort.to_lowercase().as_str() {
+                    "low" => "low",
+                    "medium" => "medium",
+                    "high" => "high",
+                    _ => "high",
+                }
+            } else {
+                budget_to_thinking_level(budget_tokens)
+            };
 
-                if is_gemini_limited && custom_value > 24576 {
-                    tracing::warn!(
-                        "[Claude-Request] Custom mode: capping thinking_budget from {} to 24576 for Gemini model {}",
-                        custom_value, mapped_model
-                    );
-                    custom_value = 24576;
+            thinking_config["thinkingLevel"] = json!(level);
+            tracing::info!(
+                "[Generation-Config] Gemini 3.0 mode: thinkingLevel={} for model {} (derived from budget_tokens={})",
+                level, mapped_model, budget_tokens
+            );
+        } else {
+            // [Gemini 2.5] 保持原有 thinkingBudget 逻辑
+            let tb_config = crate::proxy::config::get_thinking_budget_config();
+            let budget = match tb_config.mode {
+                crate::proxy::config::ThinkingBudgetMode::Passthrough => budget_tokens,
+                crate::proxy::config::ThinkingBudgetMode::Custom => {
+                    let mut custom_value = tb_config.custom_value;
+                    // [FIX #1602] 针对 Gemini 系列模型，在自定义模式下也强制执行 24576 上限
+                    let is_gemini_limited = (model_lower.contains("gemini") && !model_lower.contains("-image"))
+                        || model_lower.contains("flash")
+                        || model_lower.ends_with("-thinking");
+
+                    if is_gemini_limited && custom_value > 24576 {
+                        tracing::warn!(
+                            "[Claude-Request] Custom mode: capping thinking_budget from {} to 24576 for Gemini model {}",
+                            custom_value, mapped_model
+                        );
+                        custom_value = 24576;
+                    }
+                    custom_value
                 }
-                custom_value
-            }
-            crate::proxy::config::ThinkingBudgetMode::Auto => {
-                // [FIX #1592] Use mapped model for robust detection, same as OpenAI protocol
-                let model_lower = mapped_model.to_lowercase();
-                let is_gemini_limited = (model_lower.contains("gemini") && !model_lower.contains("-image"))
-                    || model_lower.contains("flash")
-                    || model_lower.ends_with("-thinking");
-                if is_gemini_limited && budget_tokens > 24576 {
-                    tracing::info!(
-                        "[Claude-Request] Auto mode: capping thinking_budget from {} to 24576 for Gemini model {}", 
-                        budget_tokens, mapped_model
-                    );
-                    24576
-                } else {
-                    budget_tokens
+                crate::proxy::config::ThinkingBudgetMode::Auto => {
+                    // [FIX #1592] Use mapped model for robust detection, same as OpenAI protocol
+                    let is_gemini_limited = (model_lower.contains("gemini") && !model_lower.contains("-image"))
+                        || model_lower.contains("flash")
+                        || model_lower.ends_with("-thinking");
+                    if is_gemini_limited && budget_tokens > 24576 {
+                        tracing::info!(
+                            "[Claude-Request] Auto mode: capping thinking_budget from {} to 24576 for Gemini model {}",
+                            budget_tokens, mapped_model
+                        );
+                        24576
+                    } else {
+                        budget_tokens
+                    }
                 }
-            }
-        };
-        thinking_config["thinkingBudget"] = json!(budget);
+            };
+            thinking_config["thinkingBudget"] = json!(budget);
+        }
         config["thinkingConfig"] = thinking_config;
     }
 
@@ -1786,48 +1816,57 @@ fn build_generation_config(
         config["topK"] = json!(top_k);
     }
 
-    // Effort level mapping (Claude API v2.0.67+)
-    // Maps Claude's output_config.effort to Gemini's effortLevel
+    // [FIX] 移除 effortLevel 注入 — effortLevel 不是 Gemini API 的合法 generationConfig 字段
+    // 之前直接注入 config["effortLevel"] 会导致:
+    //   Unknown name "effortLevel" at 'request.generation_config': Cannot find field.
+    // 对于 Gemini 3.0 模型，effort 已在上面的 thinkingLevel 中正确映射
+    // 对于 Gemini 2.5 模型，无对应参数，安全忽略
     if let Some(output_config) = &claude_req.output_config {
         if let Some(effort) = &output_config.effort {
-            config["effortLevel"] = json!(match effort.to_lowercase().as_str() {
-                "high" => "HIGH",
-                "medium" => "MEDIUM",
-                "low" => "LOW",
-                _ => "HIGH", // Default to HIGH for unknown values
-            });
             tracing::debug!(
-                "[Generation-Config] Effort level set: {} -> {}",
+                "[Generation-Config] effort={} handled via {} (not injected as effortLevel)",
                 effort,
-                config["effortLevel"]
+                if uses_thinking_level { "thinkingLevel" } else { "ignored (Gemini 2.5)" }
             );
         }
     }
-
-    // web_search 强制 candidateCount=1
-    /*if has_web_search {
-        config["candidateCount"] = json!(1);
-    }*/
 
     // max_tokens 映射为 maxOutputTokens
     // [FIX] 不再默认设置 81920，防止非思维模型 (如 claude-sonnet-4-5) 报 400 Invalid Argument
     let mut final_max_tokens: Option<i64> = claude_req.max_tokens.map(|t| t as i64);
 
-    // [NEW] 确保 maxOutputTokens 大于 thinkingBudget (API 强约束)
-    if let Some(thinking_config) = config.get("thinkingConfig") {
-        if let Some(budget) = thinking_config
-            .get("thinkingBudget")
-            .and_then(|t| t.as_u64())
-        {
-            let current = final_max_tokens.unwrap_or(0);
-            if current <= budget as i64 {
-                // [FIX #1675] 针对图像模型使用更小的增量 (2048)
-                let overhead = if mapped_model.contains("-image") { 2048 } else { 8192 };
-                final_max_tokens = Some((budget + overhead) as i64);
-                tracing::info!(
-                    "[Generation-Config] Bumping maxOutputTokens to {} due to thinking budget of {}", 
-                    final_max_tokens.unwrap(), budget
-                );
+    // [FIX] 对 maxOutputTokens 设置安全上限，防止客户端 (如 Cherry Studio) 发送超大值导致 400
+    // 各模型实际上限不同，使用保守通用值 65536 作为安全边界
+    if let Some(val) = final_max_tokens {
+        let max_limit: i64 = 65536;
+        if val > max_limit {
+            tracing::warn!(
+                "[Generation-Config] Capping maxOutputTokens from {} to {} for model {}",
+                val, max_limit, mapped_model
+            );
+            final_max_tokens = Some(max_limit);
+        }
+    }
+
+    // [FIX] 确保 maxOutputTokens 大于 thinkingBudget (API 强约束)
+    // 仅对 Gemini 2.5 (thinkingBudget) 生效
+    // Gemini 3.0 (thinkingLevel) 由模型自行管理 token 分配，无需此检查
+    if !uses_thinking_level {
+        if let Some(thinking_config) = config.get("thinkingConfig") {
+            if let Some(budget) = thinking_config
+                .get("thinkingBudget")
+                .and_then(|t| t.as_u64())
+            {
+                let current = final_max_tokens.unwrap_or(0);
+                if current <= budget as i64 {
+                    // [FIX #1675] 针对图像模型使用更小的增量 (2048)
+                    let overhead = if mapped_model.contains("-image") { 2048 } else { 8192 };
+                    final_max_tokens = Some((budget + overhead) as i64);
+                    tracing::info!(
+                        "[Generation-Config] Bumping maxOutputTokens to {} due to thinking budget of {}",
+                        final_max_tokens.unwrap(), budget
+                    );
+                }
             }
         }
     }
@@ -1845,6 +1884,18 @@ fn build_generation_config(
     config["stopSequences"] = json!(["<|user|>", "<|end_of_turn|>", "\n\nHuman:"]);
 
     config
+}
+
+/// 将 thinkingBudget 数值映射为 Gemini 3.0 的 thinkingLevel 枚举
+/// Gemini 3.0 废弃了精确的 token 预算控制，改用语义化的思维等级
+/// 映射阈值参考 Google 官方文档和社区最佳实践
+fn budget_to_thinking_level(budget: u32) -> &'static str {
+    match budget {
+        0..=512 => "minimal",
+        513..=4096 => "low",
+        4097..=16384 => "medium",
+        _ => "high",
+    }
 }
 
 /// Recursively remove 'thought' and 'thoughtSignature' fields

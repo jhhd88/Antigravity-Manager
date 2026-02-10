@@ -402,10 +402,16 @@ pub fn transform_openai_request(
         "topP": request.top_p.unwrap_or(0.95), // Gemini default is usually 0.95
     });
 
-    // [FIX] 移除默认的 81920 maxOutputTokens，防止非思维模型 (如 claude-sonnet-4-5) 报 400 Invalid Argument
-    // 仅在用户显式提供时设置
+    // [FIX] maxOutputTokens 安全处理：透传用户值但设置 65536 上限
     if let Some(max_tokens) = request.max_tokens {
-         gen_config["maxOutputTokens"] = json!(max_tokens);
+        let capped = std::cmp::min(max_tokens, 65536);
+        if max_tokens > 65536 {
+            tracing::warn!(
+                "[OpenAI-Request] Capping maxOutputTokens from {} to 65536 for model {}",
+                max_tokens, mapped_model
+            );
+        }
+        gen_config["maxOutputTokens"] = json!(capped);
     }
 
     // [NEW] 支持多候选结果数量 (n -> candidateCount)
@@ -413,11 +419,15 @@ pub fn transform_openai_request(
         gen_config["candidateCount"] = json!(n);
     }
 
-    // 为 thinking 模型注入 thinkingConfig (使用 thinkingBudget 而非 thinkingLevel)
+    // [FIX] Gemini 3.0 模型使用 thinkingLevel (枚举) 替代 thinkingBudget (整数)
+    // 两者不能共存，发送错误参数会导致 400 INVALID_ARGUMENT
+    let uses_thinking_level = mapped_model_lower.contains("gemini-3")
+        || mapped_model_lower.contains("claude-opus-4-6")
+        || mapped_model_lower.contains("claude-opus-4.6");
+
     if actual_include_thinking {
         // [RESOLVE #1694] Check image thinking mode
         let image_thinking_mode = crate::proxy::config::get_image_thinking_mode();
-        // Only disable if mode is explicitly "disabled" AND it's an image generation request
         let is_image_gen_disabled = config.request_type == "image_gen" && image_thinking_mode == "disabled";
 
         if is_image_gen_disabled {
@@ -425,15 +435,53 @@ pub fn transform_openai_request(
             gen_config["thinkingConfig"] = json!({
                 "includeThoughts": false
             });
-        } else {
-            // [CONFIGURABLE] 根据用户配置决定 thinking_budget 处理方式
+        } else if uses_thinking_level {
+            // ── Gemini 3.0 路径：使用 thinkingLevel 枚举 ──
             let tb_config = crate::proxy::config::get_thinking_budget_config();
-            // [FIX #1592] 下调默认 budget 到 24576，以更好地兼容不支持 32k 的 Gemini 原生模型 (如 gemini-3-pro)
+            let level = match tb_config.mode {
+                crate::proxy::config::ThinkingBudgetMode::Passthrough => {
+                    let user_budget = user_thinking_budget.unwrap_or(16384) as u32;
+                    let lvl = budget_to_thinking_level(user_budget);
+                    tracing::debug!(
+                        "[OpenAI-Request] Passthrough mode: mapped budget {} → thinkingLevel={} for Gemini 3.0",
+                        user_budget, lvl
+                    );
+                    lvl
+                }
+                crate::proxy::config::ThinkingBudgetMode::Custom => {
+                    let lvl = budget_to_thinking_level(tb_config.custom_value);
+                    tracing::debug!(
+                        "[OpenAI-Request] Custom mode: mapped custom_value {} → thinkingLevel={} for Gemini 3.0",
+                        tb_config.custom_value, lvl
+                    );
+                    lvl
+                }
+                crate::proxy::config::ThinkingBudgetMode::Auto => {
+                    tracing::debug!(
+                        "[OpenAI-Request] Auto mode: using thinkingLevel=high for Gemini 3.0 model {}",
+                        mapped_model
+                    );
+                    "high"
+                }
+            };
+
+            gen_config["thinkingConfig"] = json!({
+                "includeThoughts": true,
+                "thinkingLevel": level
+            });
+
+            tracing::debug!(
+                "[OpenAI-Request] Injected thinkingConfig for Gemini 3.0 model {}: thinkingLevel={} (mode={:?})",
+                mapped_model, level, tb_config.mode
+            );
+            // Gemini 3.0 不需要手动调整 maxOutputTokens vs thinkingBudget（模型自行管理）
+        } else {
+            // ── Gemini 2.5 路径：保持 thinkingBudget 整数 ──
+            let tb_config = crate::proxy::config::get_thinking_budget_config();
             let user_budget: i64 = user_thinking_budget.map(|b| b as i64).unwrap_or(24576);
-            
+
             let budget = match tb_config.mode {
                 crate::proxy::config::ThinkingBudgetMode::Passthrough => {
-                    // 透传模式：使用用户传入的值，不做任何限制
                     tracing::debug!(
                         "[OpenAI-Request] Passthrough mode: using caller's budget {}",
                         user_budget
@@ -441,12 +489,10 @@ pub fn transform_openai_request(
                     user_budget
                 }
                 crate::proxy::config::ThinkingBudgetMode::Custom => {
-                    // 自定义模式：使用全局配置的固定值
                     let mut custom_value = tb_config.custom_value as i64;
-                    
-                    // [FIX #1592/1602] 针对 Gemini 类模型强制执行 24576 上限 (除画图模型外，见用户反馈)
+
                     let is_gemini_limited = (mapped_model_lower.contains("gemini") && !mapped_model_lower.contains("-image"))
-                        || is_claude_thinking; 
+                        || is_claude_thinking;
 
                     if is_gemini_limited && custom_value > 24576 {
                         tracing::warn!(
@@ -458,19 +504,17 @@ pub fn transform_openai_request(
 
                     tracing::debug!(
                         "[OpenAI-Request] Custom mode: overriding {} with fixed value {}",
-                        user_budget,
-                        custom_value
+                        user_budget, custom_value
                     );
                     custom_value
                 }
                 crate::proxy::config::ThinkingBudgetMode::Auto => {
-                    // [FIX #1592] 拓宽判定逻辑，确保所有 Gemini 思考模型都应用 24k 上限 (除画画模型外)
                     let is_gemini_limited = (mapped_model_lower.contains("gemini") && !mapped_model_lower.contains("-image"))
-                        || is_claude_thinking;  
-                    
+                        || is_claude_thinking;
+
                     if is_gemini_limited && user_budget > 24576 {
                         tracing::info!(
-                            "[OpenAI-Request] Auto mode: capping thinking budget from {} to 24576 for model: {}", 
+                            "[OpenAI-Request] Auto mode: capping thinking budget from {} to 24576 for model: {}",
                             user_budget, mapped_model
                         );
                         24576
@@ -485,8 +529,7 @@ pub fn transform_openai_request(
                 "thinkingBudget": budget
             });
 
-            // [CRITICAL] 思维模型的 maxOutputTokens 必须大于 thinkingBudget
-            // [FIX #1675] 针对图像模型使用更保守的 max_tokens 增量，避免触发 128k 限制
+            // [CRITICAL] Gemini 2.5 思维模型的 maxOutputTokens 必须大于 thinkingBudget
             let overhead = if config.request_type == "image_gen" { 2048 } else { 32768 };
             let min_overhead = if config.request_type == "image_gen" { 1024 } else { 8192 };
 
@@ -495,16 +538,15 @@ pub fn transform_openai_request(
                      gen_config["maxOutputTokens"] = json!(budget + min_overhead);
                  }
             } else {
-                 // [FIX #1592] Use a more conservative default to avoid 400 error on 128k context models
                  gen_config["maxOutputTokens"] = json!(budget + overhead);
             }
-            
+
             let new_max = gen_config["maxOutputTokens"].as_i64().unwrap_or(0);
             tracing::debug!(
                 "[OpenAI-Request] Adjusted maxOutputTokens to {} for thinking model (budget={})",
                 new_max, budget
             );
-            
+
             tracing::debug!(
                 "[OpenAI-Request] Injected thinkingConfig for model {}: thinkingBudget={} (mode={:?})",
                 mapped_model, budget, tb_config.mode
@@ -720,6 +762,16 @@ fn enforce_uppercase_types(value: &mut Value) {
         for item in arr {
             enforce_uppercase_types(item);
         }
+    }
+}
+
+/// 将 thinkingBudget 数值映射为 Gemini 3.0 的 thinkingLevel 枚举值
+fn budget_to_thinking_level(budget: u32) -> &'static str {
+    match budget {
+        0..=512 => "minimal",
+        513..=4096 => "low",
+        4097..=16384 => "medium",
+        _ => "high",
     }
 }
 

@@ -1,6 +1,16 @@
 // Gemini v1internal 包装/解包
 use serde_json::{json, Value};
 
+/// 将 thinkingBudget 数值映射为 Gemini 3.0 的 thinkingLevel 枚举值
+fn budget_to_thinking_level(budget: u32) -> &'static str {
+    match budget {
+        0..=512 => "minimal",
+        513..=4096 => "low",
+        4097..=16384 => "medium",
+        _ => "high",
+    }
+}
+
 /// 包装请求体为 v1internal 格式
 pub fn wrap_request(
     body: &Value,
@@ -114,17 +124,11 @@ pub fn wrap_request(
             .as_object_mut()
             .unwrap();
 
-        // Check if thinkingConfig exists, if not, inject default if it's a known thinking model without config
-        // Only inject if it's NOT a model that explicitly forbids thinking (no such cases yet for this filter)
-        // Note: regular pro models (gemini-1.5-pro) might not support thinking, but gemini-2.0-pro/gemini-3-pro do.
-        // We might need to be careful with 1.5 pro.
-        // However, 1.5 pro doesn't error with thinkingConfig, it just ignores it or uses it if supported later.
-        // Safest is to target specific high-reasoning lines or just rely on upstream to ignore.
-        // But for "gemini-3-pro" specifically, we NEED it.
+        // [FIX] Gemini 3.0 使用 thinkingLevel 枚举，Gemini 2.5 使用 thinkingBudget 整数
+        let uses_thinking_level = lower_model.contains("gemini-3");
+
+        // Auto-inject thinkingConfig if missing for known thinking models
         if gen_config.get("thinkingConfig").is_none() {
-            // For safety, only auto-inject for models we usually want thinking on:
-            // - any with "thinking" in name
-            // - gemini-3-pro / gemini-2.0-pro
             let should_inject = lower_model.contains("thinking")
                 || lower_model.contains("gemini-2.0-pro")
                 || lower_model.contains("gemini-3-pro");
@@ -135,77 +139,130 @@ pub fn wrap_request(
                     final_model_name
                 );
 
-                // Use a safe default budget or let auto-capping handle it (if we set something high)
-                // But wait, if we set it here, the capping logic below will see it and clamp it if needed.
-                // Let's rely on global default logic if possible, or hardcode a safe default.
-                // The capping logic reads from it.
-                // Let's inject a reasonable default that triggers thinking.
-                gen_config.insert(
-                    "thinkingConfig".to_string(),
-                    json!({
-                        "includeThoughts": true,
-                        "thinkingBudget": 24576 // Default safe budget for auto-injected (aligned with other mappers)
-                    }),
-                );
+                if uses_thinking_level {
+                    // Gemini 3.0: 使用 thinkingLevel 枚举
+                    let tb_config = crate::proxy::config::get_thinking_budget_config();
+                    let level = match tb_config.mode {
+                        crate::proxy::config::ThinkingBudgetMode::Custom => {
+                            budget_to_thinking_level(tb_config.custom_value)
+                        }
+                        _ => "high", // Auto/Passthrough 默认 high
+                    };
+                    gen_config.insert(
+                        "thinkingConfig".to_string(),
+                        json!({
+                            "includeThoughts": true,
+                            "thinkingLevel": level
+                        }),
+                    );
+                    tracing::debug!(
+                        "[Gemini-Wrap] Gemini 3.0 auto-inject: thinkingLevel={} for {}",
+                        level, final_model_name
+                    );
+                } else {
+                    // Gemini 2.5: 使用 thinkingBudget 整数
+                    gen_config.insert(
+                        "thinkingConfig".to_string(),
+                        json!({
+                            "includeThoughts": true,
+                            "thinkingBudget": 24576
+                        }),
+                    );
+                }
             }
         }
 
+        // Process existing thinkingConfig
         if let Some(thinking_config) = gen_config.get_mut("thinkingConfig") {
-            if let Some(budget_val) = thinking_config.get("thinkingBudget") {
-                if let Some(budget) = budget_val.as_u64() {
-                    let tb_config = crate::proxy::config::get_thinking_budget_config();
-                    let final_budget = match tb_config.mode {
-                        crate::proxy::config::ThinkingBudgetMode::Passthrough => {
-                            // 透传模式：不做任何修改，完全使用上游传入值
-                            tracing::debug!(
-                                "[Gemini-Wrap] Passthrough mode: keeping budget {} for model {}",
-                                budget,
-                                final_model_name
-                            );
-                            budget
-                        }
-                        crate::proxy::config::ThinkingBudgetMode::Custom => {
-                            // 自定义模式：使用全局配置的固定值
-                            // [FIX #1592] Even in Custom mode, cap to 24576 for known Gemini thinking limit
-                            let val = tb_config.custom_value as u64;
-                            let is_limited = (final_model_name.contains("gemini") || final_model_name.contains("thinking"))
-                                && !final_model_name.contains("-image");
-
-                            if is_limited && val > 24576 {
-                                tracing::warn!(
-                                    "[Gemini-Wrap] Custom mode: capping thinking_budget from {} to 24576 for model {}",
-                                    val, final_model_name
-                                );
-                                24576
-                            } else {
-                                if val != budget {
-                                    tracing::debug!(
-                                        "[Gemini-Wrap] Custom mode: overriding {} with {} for model {}",
-                                        budget, val, final_model_name
-                                    );
-                                }
-                                val
+            if uses_thinking_level {
+                // ── Gemini 3.0 路径 ──
+                // 如果客户端错误地发送了 thinkingBudget，转换为 thinkingLevel
+                if let Some(budget_val) = thinking_config.get("thinkingBudget") {
+                    if let Some(budget) = budget_val.as_u64() {
+                        let tb_config = crate::proxy::config::get_thinking_budget_config();
+                        let level = match tb_config.mode {
+                            crate::proxy::config::ThinkingBudgetMode::Passthrough => {
+                                budget_to_thinking_level(budget as u32)
                             }
-                        }
-                        crate::proxy::config::ThinkingBudgetMode::Auto => {
-                            // 自动模式：应用 24576 capping (除画图模型外)
-                            let is_limited = (final_model_name.contains("gemini") || final_model_name.contains("thinking"))
-                                && !final_model_name.contains("-image");
-
-                            if is_limited && budget > 24576 {
-                                tracing::info!(
-                                    "[Gemini-Wrap] Auto mode: capping thinking_budget from {} to 24576 for model {}", 
+                            crate::proxy::config::ThinkingBudgetMode::Custom => {
+                                budget_to_thinking_level(tb_config.custom_value)
+                            }
+                            crate::proxy::config::ThinkingBudgetMode::Auto => "high",
+                        };
+                        // 移除 thinkingBudget，替换为 thinkingLevel
+                        thinking_config.as_object_mut().unwrap().remove("thinkingBudget");
+                        thinking_config["thinkingLevel"] = json!(level);
+                        tracing::info!(
+                            "[Gemini-Wrap] Gemini 3.0: converted thinkingBudget={} → thinkingLevel={} for {}",
+                            budget, level, final_model_name
+                        );
+                    }
+                }
+                // 如果已经有 thinkingLevel，遵循配置模式
+                else if thinking_config.get("thinkingLevel").is_some() {
+                    let tb_config = crate::proxy::config::get_thinking_budget_config();
+                    if let crate::proxy::config::ThinkingBudgetMode::Custom = tb_config.mode {
+                        let level = budget_to_thinking_level(tb_config.custom_value);
+                        thinking_config["thinkingLevel"] = json!(level);
+                        tracing::debug!(
+                            "[Gemini-Wrap] Custom mode: overriding thinkingLevel to {} for {}",
+                            level, final_model_name
+                        );
+                    }
+                }
+            } else {
+                // ── Gemini 2.5 路径：保持原有 thinkingBudget 处理逻辑 ──
+                if let Some(budget_val) = thinking_config.get("thinkingBudget") {
+                    if let Some(budget) = budget_val.as_u64() {
+                        let tb_config = crate::proxy::config::get_thinking_budget_config();
+                        let final_budget = match tb_config.mode {
+                            crate::proxy::config::ThinkingBudgetMode::Passthrough => {
+                                tracing::debug!(
+                                    "[Gemini-Wrap] Passthrough mode: keeping budget {} for model {}",
                                     budget, final_model_name
                                 );
-                                24576
-                            } else {
                                 budget
                             }
-                        }
-                    };
+                            crate::proxy::config::ThinkingBudgetMode::Custom => {
+                                let val = tb_config.custom_value as u64;
+                                let is_limited = (final_model_name.contains("gemini") || final_model_name.contains("thinking"))
+                                    && !final_model_name.contains("-image");
 
-                    if final_budget != budget {
-                        thinking_config["thinkingBudget"] = json!(final_budget);
+                                if is_limited && val > 24576 {
+                                    tracing::warn!(
+                                        "[Gemini-Wrap] Custom mode: capping thinking_budget from {} to 24576 for model {}",
+                                        val, final_model_name
+                                    );
+                                    24576
+                                } else {
+                                    if val != budget {
+                                        tracing::debug!(
+                                            "[Gemini-Wrap] Custom mode: overriding {} with {} for model {}",
+                                            budget, val, final_model_name
+                                        );
+                                    }
+                                    val
+                                }
+                            }
+                            crate::proxy::config::ThinkingBudgetMode::Auto => {
+                                let is_limited = (final_model_name.contains("gemini") || final_model_name.contains("thinking"))
+                                    && !final_model_name.contains("-image");
+
+                                if is_limited && budget > 24576 {
+                                    tracing::info!(
+                                        "[Gemini-Wrap] Auto mode: capping thinking_budget from {} to 24576 for model {}",
+                                        budget, final_model_name
+                                    );
+                                    24576
+                                } else {
+                                    budget
+                                }
+                            }
+                        };
+
+                        if final_budget != budget {
+                            thinking_config["thinkingBudget"] = json!(final_budget);
+                        }
                     }
                 }
             }

@@ -6,7 +6,7 @@ import { Trash2, Check, Plus, Search, X, ShieldCheck } from 'lucide-react';
 interface IpWhitelistEntry {
     ip_pattern: string;
     description?: string;
-    added_at: number;
+    created_at: number;
     added_by?: string;
 }
 
@@ -64,7 +64,7 @@ export const WhitelistManager: React.FC<Props> = ({ refreshKey }) => {
         setEntries(prev => prev.filter(e => e.ip_pattern !== ipPattern));
 
         try {
-            await invoke('remove_ip_from_whitelist', { ipPattern: ipPattern });
+            await invoke('remove_ip_from_whitelist', { ip_pattern: ipPattern });
         } catch (e) {
             console.error('Failed to remove from whitelist', e);
             // 如果删除失败，重新加载数据恢复UI
@@ -125,7 +125,7 @@ export const WhitelistManager: React.FC<Props> = ({ refreshKey }) => {
                             )}
 
                             <div className="text-xs text-gray-400 flex flex-col gap-1 mt-3 pt-3 border-t border-gray-50 dark:border-base-200 relative z-10">
-                                <span>{t('security.blacklist.added_at')}: {new Date(entry.added_at * 1000).toLocaleString()}</span>
+                                <span>{t('security.blacklist.added_at')}: {new Date(entry.created_at * 1000).toLocaleString()}</span>
                             </div>
                         </div>
                     ))}

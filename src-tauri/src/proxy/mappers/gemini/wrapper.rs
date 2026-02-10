@@ -280,6 +280,7 @@ pub fn wrap_request(
         size,       // [FIX] Pass size parameter
         quality,    // [FIX] Pass quality parameter
         Some(body), // [NEW] Pass request body for imageConfig parsing
+        true,       // [FIX #1482] Default: degradation enabled (handler overrides when it has state access)
     );
 
     // Clean tool declarations (remove forbidden Schema fields like multipleOf, and remove redundant search decls)

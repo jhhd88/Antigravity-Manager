@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Upload, FileText, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { ProxyEntry } from '../../../types/config';
+import { ProxyEntry, ProxyAuth } from '../../../types/config';
 import { generateUUID } from '../../../utils/uuid';
 
 interface BatchImportModalProps {
@@ -66,11 +66,26 @@ export default function BatchImportModal({ isOpen, onClose, onImport }: BatchImp
                     return;
                 }
 
+                // Extract embedded auth from URL (e.g., http://user:pass@host:port)
+                let auth: ProxyAuth | undefined;
+                try {
+                    const urlObj = new URL(url);
+                    if (urlObj.username || urlObj.password) {
+                        auth = {
+                            username: decodeURIComponent(urlObj.username),
+                            password: decodeURIComponent(urlObj.password || ''),
+                        };
+                        urlObj.username = '';
+                        urlObj.password = '';
+                        url = urlObj.toString();
+                    }
+                } catch { /* URL parse failed, keep as-is */ }
+
                 newProxies.push({
                     id: generateUUID(),
-                    // Name will be assigned when adding to main list or just generic here
                     name: `Imported Proxy`,
                     url: url,
+                    auth,
                     enabled: true,
                     priority: 1,
                     tags: ['imported'],

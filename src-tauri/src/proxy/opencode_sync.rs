@@ -184,7 +184,15 @@ fn resolve_opencode_path_windows() -> Option<PathBuf> {
             return Some(path);
         }
     }
-    
+
+    // [FIX #1798] Scan %APPDATA%\nvm (nvm-windows common path)
+    if let Ok(app_data) = env::var("APPDATA") {
+        let nvm_appdata = PathBuf::from(&app_data).join("nvm");
+        if let Some(path) = scan_nvm_directory(&nvm_appdata) {
+            return Some(path);
+        }
+    }
+
     None
 }
 
@@ -355,20 +363,30 @@ fn find_in_path(executable: &str) -> Option<PathBuf> {
 #[cfg(target_os = "windows")]
 fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
     let path_str = opencode_path.to_string_lossy();
-    
+
     // Check if it's a .cmd or .bat file that needs cmd.exe
     let is_cmd = path_str.ends_with(".cmd") || path_str.ends_with(".bat");
-    
+
+    // [FIX #1798] Enhance PATH for subprocess so it can find node
+    let enhanced_path = if let Some(parent) = opencode_path.parent() {
+        let current_path = env::var("PATH").unwrap_or_default();
+        format!("{};{}", parent.display(), current_path)
+    } else {
+        env::var("PATH").unwrap_or_default()
+    };
+
     let output = if is_cmd {
         let mut cmd = Command::new("cmd.exe");
         cmd.arg("/C")
             .arg(opencode_path)
             .arg("--version")
+            .env("PATH", &enhanced_path)
             .creation_flags(CREATE_NO_WINDOW);
         cmd.output()
     } else {
         let mut cmd = Command::new(opencode_path);
         cmd.arg("--version")
+            .env("PATH", &enhanced_path)
             .creation_flags(CREATE_NO_WINDOW);
         cmd.output()
     };
@@ -401,9 +419,17 @@ fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
 
 #[cfg(not(target_os = "windows"))]
 fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
-    let output = Command::new(opencode_path)
-        .arg("--version")
-        .output();
+    let mut cmd = Command::new(opencode_path);
+    cmd.arg("--version");
+
+    // [FIX #1798] Enhance PATH for subprocess so it can find node
+    if let Some(parent) = opencode_path.parent() {
+        let current_path = env::var("PATH").unwrap_or_default();
+        let enhanced_path = format!("{}:{}", parent.display(), current_path);
+        cmd.env("PATH", enhanced_path);
+    }
+
+    let output = cmd.output();
     
     match output {
         Ok(output) if output.status.success() => {
@@ -451,8 +477,10 @@ pub fn check_opencode_installed() -> (bool, Option<String>) {
             (true, Some(version))
         }
         None => {
-            tracing::debug!("Failed to get opencode version");
-            (false, None)
+            // [FIX #1798] Binary exists at resolved path but version check failed
+            // (e.g., missing node in PATH). Report as installed anyway.
+            tracing::debug!("Found opencode binary but failed to get version, reporting as installed");
+            (true, None)
         }
     }
 }

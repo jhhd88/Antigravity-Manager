@@ -33,6 +33,9 @@ pub async fn handle_chat_completions(
     // 这确保了即使结构体定义遗漏字段，日志也能完整记录所有参数
     let original_body = body.clone();
 
+    // [FIX] 深度清理 "[undefined]" 字符串，防止 serde 反序列化失败
+    crate::proxy::mappers::common_utils::deep_clean_undefined(&mut body);
+
     // [NEW] 自动检测并转换 Responses 格式
     // 如果请求包含 instructions 或 input 但没有 messages，则认为是 Responses 格式
     let is_responses_format = !body.get("messages").is_some()
@@ -160,6 +163,7 @@ pub async fn handle_chat_completions(
             .tools
             .as_ref()
             .map(|list| list.iter().cloned().collect());
+        let enable_web_search_degradation = state.experimental.read().await.enable_web_search_degradation;
         let config = crate::proxy::mappers::common_utils::resolve_request_config(
             &openai_req.model,
             &mapped_model,
@@ -167,6 +171,7 @@ pub async fn handle_chat_completions(
             None, // size (not used in handler, transform_openai_request handles it)
             None, // quality
             None, // OpenAI handler uses transform_openai_request for image gen
+            enable_web_search_degradation, // [FIX #1482]
         );
 
         // 3. 提取 SessionId (粘性指纹)
@@ -728,6 +733,9 @@ pub async fn handle_completions(
     State(state): State<AppState>,
     Json(mut body): Json<Value>,
 ) -> Response {
+    // [FIX] 深度清理 "[undefined]" 字符串，防止 serde 反序列化失败
+    crate::proxy::mappers::common_utils::deep_clean_undefined(&mut body);
+
     debug!(
         "Received /v1/completions or /v1/responses payload: {:?}",
         body
@@ -1123,6 +1131,7 @@ pub async fn handle_completions(
             .tools
             .as_ref()
             .map(|list| list.iter().cloned().collect());
+        let enable_web_search_degradation = state.experimental.read().await.enable_web_search_degradation;
         let config = crate::proxy::mappers::common_utils::resolve_request_config(
             &openai_req.model,
             &mapped_model,
@@ -1130,6 +1139,7 @@ pub async fn handle_completions(
             None, // size
             None, // quality
             None, // OpenAI handler uses transform_openai_request for image gen
+            enable_web_search_degradation, // [FIX #1482]
         );
 
         // 3. 提取 SessionId (复用)

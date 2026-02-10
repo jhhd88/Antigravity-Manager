@@ -117,6 +117,7 @@ pub async fn handle_generate(
                 flattened
             });
 
+        let enable_web_search_degradation = state.experimental.read().await.enable_web_search_degradation;
         let config = crate::proxy::mappers::common_utils::resolve_request_config(
             &model_name,
             &mapped_model,
@@ -124,6 +125,7 @@ pub async fn handle_generate(
             None,        // size (not applicable for Gemini native protocol)
             None,        // quality
             Some(&body), // [NEW] Pass request body for imageConfig parsing
+            enable_web_search_degradation, // [FIX #1482]
         );
 
         // 4. 获取 Token (使用准确的 request_type)

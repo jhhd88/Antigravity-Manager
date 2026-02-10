@@ -58,11 +58,23 @@ mod tests {
             Some("claude".to_string())
         );
 
-        // Claude Opus 系列 - 这是关键的测试！
+        // Claude Opus 4.5 系列
         assert_eq!(
             normalize_to_standard_id("claude-opus-4-5-thinking"),
             Some("claude".to_string()),
             "claude-opus-4-5-thinking 应该归一化为 claude"
+        );
+
+        // [FIX #1776] Claude Opus 4.6 系列 - 应有独立标准 ID
+        assert_eq!(
+            normalize_to_standard_id("claude-opus-4-6"),
+            Some("claude-opus-4-6".to_string()),
+            "claude-opus-4-6 应该归一化为 claude-opus-4-6"
+        );
+        assert_eq!(
+            normalize_to_standard_id("claude-opus-4.6"),
+            Some("claude-opus-4-6".to_string()),
+            "claude-opus-4.6 应该归一化为 claude-opus-4-6"
         );
 
         // Gemini 系列
@@ -587,6 +599,11 @@ mod tests {
         assert_eq!(
             normalize_to_standard_id("GEMINI-3-FLASH"),
             Some("gemini-3-flash".to_string())
+        );
+        // [FIX #1776] Opus 4.6 case insensitivity
+        assert_eq!(
+            normalize_to_standard_id("Claude-Opus-4-6"),
+            Some("claude-opus-4-6".to_string())
         );
     }
 

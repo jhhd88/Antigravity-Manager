@@ -3253,7 +3253,7 @@ async fn admin_clear_ip_whitelist() -> Result<impl IntoResponse, (StatusCode, Js
     let entries = security_db::get_whitelist()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
     for entry in entries {
-        security_db::remove_from_whitelist(&entry.ip_pattern)
+        security_db::remove_from_whitelist(&entry.id)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
     }
     Ok(StatusCode::OK)

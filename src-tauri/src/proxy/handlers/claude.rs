@@ -120,7 +120,12 @@ pub async fn handle_messages(
     // [FIX] 保存原始请求体的完整副本，用于日志记录
     // 这确保了即使结构体定义遗漏字段，日志也能完整记录所有参数
     let original_body = body.clone();
-    
+
+    // [FIX] 深度清理 Cherry Studio 等客户端注入的 "[undefined]" 字符串
+    // 必须在 serde_json::from_value() 之前执行，否则 "[undefined]" 会导致类型反序列化失败（如 temperature: Option<f64>）
+    let mut body = body;
+    crate::proxy::mappers::common_utils::deep_clean_undefined(&mut body);
+
     tracing::debug!("handle_messages called. Body JSON len: {}", body.to_string().len());
     
     // 生成随机 Trace ID 用户追踪
@@ -406,6 +411,7 @@ pub async fn handle_messages(
             list.iter().map(|t| serde_json::to_value(t).unwrap_or(json!({}))).collect()
         });
 
+        let enable_web_search_degradation = state.experimental.read().await.enable_web_search_degradation;
         let config = crate::proxy::mappers::common_utils::resolve_request_config(
             &request_for_body.model,
             &mapped_model,
@@ -413,6 +419,7 @@ pub async fn handle_messages(
             request.size.as_deref(),      // [NEW] Pass size parameter
             request.quality.as_deref(),   // [NEW] Pass quality parameter
             None,  // Claude handler uses transform_claude_request_in for image gen
+            enable_web_search_degradation, // [FIX #1482]
         );
 
         // 0. 尝试提取 session_id 用于粘性调度 (Phase 2/3)
@@ -871,7 +878,10 @@ pub async fn handle_messages(
                             .chain(stream_rest.map(|result| -> Result<Bytes, std::io::Error> {
                                 match result {
                                     Ok(b) => Ok(b),
-                                    Err(e) => Ok(Bytes::from(format!("data: {{\"error\":\"{}\"}}\n\n", e))),
+                                    Err(e) => Ok(Bytes::from(format!(
+                                        "event: error\ndata: {{\"type\":\"error\",\"error\":{{\"type\":\"stream_error\",\"message\":\"{}\"}}}}\n\n",
+                                        e.to_string().replace('"', "\\\"")
+                                    ))),
                                 }
                             })));
 

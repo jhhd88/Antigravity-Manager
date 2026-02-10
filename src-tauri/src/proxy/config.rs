@@ -288,6 +288,12 @@ pub struct ExperimentalConfig {
     /// 上下文压缩阈值 L3 (Fork + Summary)
     #[serde(default = "default_threshold_l3")]
     pub context_compression_threshold_l3: f32,
+
+    /// 启用 Web Search 自动模型降级
+    /// 当请求包含 web_search 工具时，自动降级到 gemini-2.5-flash
+    /// 默认开启以保持向后兼容
+    #[serde(default = "default_true")]
+    pub enable_web_search_degradation: bool,
 }
 
 impl Default for ExperimentalConfig {
@@ -300,6 +306,7 @@ impl Default for ExperimentalConfig {
             context_compression_threshold_l1: 0.4,
             context_compression_threshold_l2: 0.55,
             context_compression_threshold_l3: 0.7,
+            enable_web_search_degradation: true, // 默认开启，向后兼容
         }
     }
 }
@@ -592,7 +599,7 @@ impl Default for ProxyConfig {
 }
 
 fn default_request_timeout() -> u64 {
-    120 // 默认 120 秒,原来 60 秒太短
+    600 // 默认 600 秒，匹配上游客户端超时，适配 Opus 4.6 长输出
 }
 
 fn default_zai_base_url() -> String {
@@ -629,6 +636,7 @@ impl ProxyConfig {
 pub struct ProxyAuth {
     pub username: String,
     #[serde(
+        default,
         serialize_with = "crate::utils::crypto::serialize_password",
         deserialize_with = "crate::utils::crypto::deserialize_password"
     )]

@@ -23,6 +23,7 @@ pub fn resolve_request_config(
     size: Option<&str>,    // [NEW] Image size parameter
     quality: Option<&str>, // [NEW] Image quality parameter
     body: Option<&Value>,  // [NEW] Request body for Gemini native imageConfig
+    enable_web_search_degradation: bool, // [FIX #1482] Toggle for auto model degradation
 ) -> RequestConfig {
     // 1. Image Generation Check (Priority)
     if mapped_model.starts_with("gemini-3-pro-image") {
@@ -114,14 +115,18 @@ pub fn resolve_request_config(
     };
 
     if enable_networking {
-        // [FIX] Only gemini-2.5-flash supports googleSearch tool
-        // All other models (including Gemini 3 Pro, thinking models, Claude aliases) must downgrade
-        if final_model != "gemini-2.5-flash" {
+        // [FIX #1482] Only downgrade if the toggle is enabled
+        if final_model != "gemini-2.5-flash" && enable_web_search_degradation {
             tracing::info!(
                 "[Common-Utils] Downgrading {} to gemini-2.5-flash for web search (only gemini-2.5-flash supports googleSearch)",
                 final_model
             );
             final_model = "gemini-2.5-flash".to_string();
+        } else if final_model != "gemini-2.5-flash" {
+            tracing::info!(
+                "[Common-Utils] Web search degradation disabled, keeping model {} (may not support googleSearch)",
+                final_model
+            );
         }
     }
 
@@ -486,7 +491,7 @@ mod tests {
     #[test]
     fn test_high_quality_model_auto_grounding() {
         // Auto-grounding is currently disabled by default due to conflict with image gen
-        let config = resolve_request_config("gpt-4o", "gemini-2.5-flash", &None, None, None, None);
+        let config = resolve_request_config("gpt-4o", "gemini-2.5-flash", &None, None, None, None, true);
         assert_eq!(config.request_type, "agent");
         assert!(!config.inject_google_search);
     }
@@ -504,7 +509,7 @@ mod tests {
     #[test]
     fn test_online_suffix_force_grounding() {
         let config =
-            resolve_request_config("gemini-3-flash-online", "gemini-3-flash", &None, None, None, None);
+            resolve_request_config("gemini-3-flash-online", "gemini-3-flash", &None, None, None, None, true);
         assert_eq!(config.request_type, "web_search");
         assert!(config.inject_google_search);
         assert_eq!(config.final_model, "gemini-2.5-flash");
@@ -512,7 +517,7 @@ mod tests {
 
     #[test]
     fn test_default_no_grounding() {
-        let config = resolve_request_config("claude-sonnet", "gemini-3-flash", &None, None, None, None);
+        let config = resolve_request_config("claude-sonnet", "gemini-3-flash", &None, None, None, None, true);
         assert_eq!(config.request_type, "agent");
         assert!(!config.inject_google_search);
     }
@@ -526,6 +531,7 @@ mod tests {
             None,
             None,
             None,
+            true,
         );
         assert_eq!(config.request_type, "image_gen");
         assert!(!config.inject_google_search);
@@ -651,6 +657,7 @@ mod tests {
             None,
             None,
             Some(&body),
+            true,
         );
         let image_config = config.image_config.unwrap();
         assert_eq!(image_config["imageSize"], "4K", "Should shield inferred 4K from body downgrade");
@@ -672,6 +679,7 @@ mod tests {
             None,
             None,
             Some(&body_2),
+            true,
         );
         let image_config_2 = config_2.image_config.unwrap();
         assert_eq!(image_config_2["aspectRatio"], "1:1", "Body should be allowed to override aspectRatio");

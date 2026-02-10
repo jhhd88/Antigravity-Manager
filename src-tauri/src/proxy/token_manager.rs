@@ -1579,23 +1579,9 @@ impl TokenManager {
                         pid
                     }
                     Err(e) => {
-                        tracing::error!("Failed to fetch project_id for {}: {}", token.email, e);
-                        last_error = Some(format!(
-                            "Failed to fetch project_id for {}: {}",
-                            token.email, e
-                        ));
-                        attempted.insert(token.account_id.clone());
-
-                        // 【优化】标记需要清除锁定，避免在循环内加锁
-                        if quota_group != "image_gen" {
-                            if matches!(&last_used_account_id, Some((id, _)) if id == &token.account_id)
-                            {
-                                need_update_last_used =
-                                    Some((String::new(), std::time::Instant::now()));
-                                // 空字符串表示需要清除
-                            }
-                        }
-                        continue;
+                        // [FIX #1794] Use fallback project_id instead of skipping account
+                        tracing::warn!("Failed to fetch project_id for {}: {}, using fallback", token.email, e);
+                        "bamboo-precept-lgxtn".to_string()
                     }
                 }
             };

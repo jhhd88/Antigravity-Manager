@@ -170,6 +170,7 @@ pub async fn handle_detect_model(
         None,  // size
         None,  // quality
         None,  // body (not needed for static detection)
+        true,  // [FIX #1482] Default: static capability check doesn't need config
     );
 
     // 3. Construct response

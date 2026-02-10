@@ -111,6 +111,7 @@ export interface ExperimentalConfig {
     context_compression_threshold_l1?: number;
     context_compression_threshold_l2?: number;
     context_compression_threshold_l3?: number;
+    enable_web_search_degradation?: boolean;
 }
 
 export interface CircuitBreakerConfig {
@@ -168,7 +169,7 @@ export interface CloudflaredStatus {
 
 export interface ProxyAuth {
     username: string;
-    password?: string;
+    password: string;
 }
 
 export interface ProxyEntry {

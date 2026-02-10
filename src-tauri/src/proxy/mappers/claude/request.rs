@@ -446,6 +446,7 @@ pub fn transform_claude_request_in(
         claude_req.size.as_deref(),    // [NEW] Pass size parameter
         claude_req.quality.as_deref(), // [NEW] Pass quality parameter
         None,                          // Claude uses size/quality params, not body.imageConfig
+        true,                          // [FIX #1482] Default: degradation enabled (handler overrides when it has state access)
     );
 
     // [CRITICAL FIX] Disable dummy thought injection for Vertex AI

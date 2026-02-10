@@ -64,6 +64,9 @@ export default function ProxyEditModal({ isOpen, onClose, onSave, initialData, i
         const entryToSave = { ...formData };
         if (!entryToSave.auth?.username && !entryToSave.auth?.password) {
             entryToSave.auth = undefined;
+        } else if (entryToSave.auth) {
+            // Ensure password field is always present for Rust deserialization
+            entryToSave.auth.password = entryToSave.auth.password || '';
         }
         onSave(entryToSave);
         onClose();

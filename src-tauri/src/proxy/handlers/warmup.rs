@@ -275,6 +275,26 @@ pub async fn handle_warmup(
                     .into_response()
             } else {
                 let error_text = response.text().await.unwrap_or_default();
+
+                // [FIX #1803] Mark account as forbidden on 403
+                if status_code == 403 && !account_id.is_empty() {
+                    if error_text.contains("VALIDATION_REQUIRED")
+                        || error_text.contains("verify your account")
+                        || error_text.contains("validation_url")
+                    {
+                        let block_until = chrono::Utc::now().timestamp() + 600; // 10 minutes
+                        let _ = state.token_manager
+                            .set_validation_block_public(&account_id, block_until, &error_text).await;
+                    }
+                    if let Err(e) = state.token_manager
+                        .set_forbidden(&account_id, &error_text).await
+                    {
+                        tracing::error!("[Warmup] Failed to set forbidden for {}: {}", req.email, e);
+                    } else {
+                        warn!("[Warmup] Account {} marked forbidden (403)", req.email);
+                    }
+                }
+
                 (
                     StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
                     Json(WarmupResponse {

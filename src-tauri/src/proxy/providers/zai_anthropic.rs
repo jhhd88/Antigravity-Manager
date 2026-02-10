@@ -188,6 +188,8 @@ pub async fn forward_anthropic_json(
     if let Some(cc) = body.get("cache_control") {
         tracing::info!("[ISSUE-744] Deep cleaning cache_control from ROOT: {:?}", cc);
     }
+    // [FIX] 清理 "[undefined]" 字符串值
+    crate::proxy::mappers::common_utils::deep_clean_undefined(&mut body);
     deep_remove_cache_control(&mut body);
 
     // [FIX #307] Explicitly serialize body to Vec<u8> to ensure Content-Length is set correctly.
@@ -222,7 +224,10 @@ pub async fn forward_anthropic_json(
     // Stream response body to the client (covers SSE and non-SSE).
     let stream = resp.bytes_stream().map(|chunk| match chunk {
         Ok(b) => Ok::<Bytes, std::io::Error>(b),
-        Err(e) => Ok(Bytes::from(format!("Upstream stream error: {}", e))),
+        Err(e) => Ok(Bytes::from(format!(
+            "event: error\ndata: {{\"type\":\"error\",\"error\":{{\"type\":\"stream_error\",\"message\":\"{}\"}}}}\n\n",
+            e.to_string().replace('"', "\\\"")
+        ))),
     });
 
     out.body(Body::from_stream(stream)).unwrap_or_else(|_| {

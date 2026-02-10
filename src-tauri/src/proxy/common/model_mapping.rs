@@ -294,6 +294,8 @@ pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
         Some("gemini-3-flash".to_string())
     } else if lower.contains("pro") && lower.starts_with("gemini") {
         Some("gemini-3-pro-high".to_string())
+    } else if lower.contains("opus-4-6") || lower.contains("opus-4.6") {
+        Some("claude-opus-4-6".to_string())
     } else if lower.contains("claude") || lower.contains("opus") || lower.contains("sonnet") {
         Some("claude".to_string())
     } else {

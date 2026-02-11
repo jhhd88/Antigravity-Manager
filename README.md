@@ -368,6 +368,12 @@ response = client.chat.completions.create(
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v4.1.16 (2026-02-11)**:
+        -   **[Bug 修复] Thinking 模式兼容性增强**:
+            -   **Cherry Studio 深度思考消失**: 放宽签名检查策略 — 当客户端不保存 thinking block 时（如 Cherry Studio），不再因签名缺失而禁用 thinking，改为 permissive 模式让上游 API 自行验证。
+            -   **thinking.type "adaptive" 不识别**: 支持 Claude 新增的 `adaptive` 思考类型，修复 Opus 4.6 + adaptive thinking 导致的 400 INVALID_ARGUMENT 错误。
+            -   **uses_thinking_level 对齐**: 在 Gemini wrapper 中为 `claude-opus-4-6` 启用 `thinkingLevel`（而非 `thinkingBudget`），与 request mapper 保持一致，避免参数冲突。
+        -   **[UI] Web Search 降级开关**: 在实验性设置中添加"联网搜索自动降级"开关，支持所有协议 (OpenAI/Claude/Gemini) 的 web_search 工具降级控制。
     *   **v4.1.15 (2026-02-11)**:
         -   **[Bug 修复] 批量修复 6 个用户报告问题**:
             -   **#1797 白名单/黑名单删除失败**: 修复 IPC 参数名不匹配 (camelCase vs snake_case) 及 `clear` 操作传错参数 (`ip_pattern` → `id`)。

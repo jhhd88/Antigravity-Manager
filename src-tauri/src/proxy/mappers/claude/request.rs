@@ -523,13 +523,17 @@ pub fn transform_claude_request_in(
 
         // [FIX #298] For first-time thinking requests (no thinking history),
         // we use permissive mode and let upstream handle validation.
-        // We only enforce strict signature checks when function calls are involved.
-        let needs_signature_check = has_function_calls;
+        // We only enforce strict signature checks when:
+        //   1. There ARE function calls in the request, AND
+        //   2. There IS thinking history in messages (meaning client preserves thinking blocks)
+        // If client doesn't preserve thinking blocks (e.g., Cherry Studio), we treat it
+        // the same as a first-time request and let upstream handle validation.
+        let needs_signature_check = has_function_calls && has_thinking_history;
 
         if !has_thinking_history && is_thinking_enabled {
             tracing::info!(
-                "[Thinking-Mode] First thinking request detected. Using permissive mode - \
-                 signature validation will be handled by upstream API."
+                "[Thinking-Mode] No thinking history in messages (first request or client strips thinking blocks). \
+                 Using permissive mode - signature validation will be handled by upstream API."
             );
         }
 
@@ -541,7 +545,7 @@ pub fn transform_claude_request_in(
             )
         {
             tracing::warn!(
-                "[Thinking-Mode] [FIX #295] No valid signature found for function calls. \
+                "[Thinking-Mode] [FIX #295] Thinking history exists but no valid signature found. \
                  Disabling thinking to prevent Gemini 3 Pro rejection."
             );
             is_thinking_enabled = false;

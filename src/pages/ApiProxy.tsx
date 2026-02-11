@@ -1918,6 +1918,33 @@ print(response.text)`;
                                         </label>
                                     </div>
 
+                                    {/* Web Search Degradation Toggle */}
+                                    <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-base-200 rounded-xl border border-gray-100 dark:border-base-300">
+                                        <div className="space-y-1">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-sm font-bold text-gray-900 dark:text-base-content">
+                                                    {t('proxy.config.experimental.enable_web_search_degradation')}
+                                                </span>
+                                                <HelpTooltip text={t('proxy.config.experimental.enable_web_search_degradation_tooltip')} />
+                                                <span className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-[10px] text-blue-600 dark:text-blue-400 font-bold border border-blue-200 dark:border-blue-800">
+                                                    All
+                                                </span>
+                                            </div>
+                                            <p className="text-[10px] text-gray-500 dark:text-gray-400 max-w-lg">
+                                                {t('proxy.config.experimental.enable_web_search_degradation_tooltip')}
+                                            </p>
+                                        </div>
+                                        <label className="relative inline-flex items-center cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                className="sr-only peer"
+                                                checked={appConfig.proxy.experimental?.enable_web_search_degradation !== false}
+                                                onChange={(e) => updateExperimentalConfig({ enable_web_search_degradation: e.target.checked })}
+                                            />
+                                            <div className="w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-500 shadow-inner"></div>
+                                        </label>
+                                    </div>
+
                                     {/* L1 Threshold */}
                                     <div className="flex flex-col gap-2 p-4 bg-gray-50 dark:bg-base-200 rounded-xl border border-gray-100 dark:border-base-300">
                                         <div className="flex items-center justify-between w-full">

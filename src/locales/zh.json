@@ -746,6 +746,8 @@
                 "title_tooltip": "探索性功能，可能在未来版本中调整或移除。",
                 "enable_usage_scaling": "启用用量缩放",
                 "enable_usage_scaling_tooltip": "针对 Claude 兼容协议。当总输入超过 30k Token 时开启激进缩放，防止在大上下文下频繁触发客户端压缩。注意：开启后客户端显示的用量不再代表实际计费点数。",
+                "enable_web_search_degradation": "联网搜索自动降级",
+                "enable_web_search_degradation_tooltip": "开启后，所有协议 (OpenAI/Claude/Gemini) 中包含 web_search 工具的请求将自动降级到 gemini-2.5-flash 模型。如果你希望联网搜索时保持使用原模型，请关闭此选项。",
                 "context_compression_threshold_l1": "L1 压缩阈值 (工具记录清理)",
                 "context_compression_threshold_l1_tooltip": "清理旧的工具调用记录以节省空间。建议值: 0.4 (40%)",
                 "context_compression_threshold_l2": "L2 压缩阈值 (思维链压缩)",

@@ -755,6 +755,8 @@
                 "title_tooltip": "Exploratory features that may be adjusted or removed in future versions.",
                 "enable_usage_scaling": "Enable Usage Scaling",
                 "enable_usage_scaling_tooltip": "For Claude protocol. Enables aggressive scaling when total input exceeds 30k tokens to prevent frequent client-side compression. Note: Reported usage will not reflect actual billing after enabling.",
+                "enable_web_search_degradation": "Web Search Auto Degradation",
+                "enable_web_search_degradation_tooltip": "When enabled, requests containing web_search tool from any protocol (OpenAI/Claude/Gemini) will automatically degrade to gemini-2.5-flash model. Disable this if you want to keep the original model for web search requests.",
                 "context_compression_threshold_l1": "L1 Compression Threshold (Tool Trimming)",
                 "context_compression_threshold_l1_tooltip": "Trims old tool call records to save space. Recommended: 0.4 (40%)",
                 "context_compression_threshold_l2": "L2 Compression Threshold (Thinking Compression)",

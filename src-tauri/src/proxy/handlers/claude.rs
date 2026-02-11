@@ -13,7 +13,7 @@ use tokio::time::Duration;
 use tracing::{debug, error, info};
 
 use crate::proxy::mappers::claude::{
-    transform_claude_request_in, transform_response, create_claude_sse_stream, ClaudeRequest,
+    transform_claude_request_in, create_claude_sse_stream, ClaudeRequest,
     filter_invalid_thinking_blocks_with_family, close_tool_loop_for_thinking,
     clean_cache_control_from_messages, merge_consecutive_messages,
     models::{Message, MessageContent},
@@ -917,69 +917,6 @@ pub async fn handle_messages(
                         continue;
                     }
                 }
-            } else {
-                // 处理非流式响应
-                let bytes = match response.bytes().await {
-                    Ok(b) => b,
-                    Err(e) => return (StatusCode::BAD_GATEWAY, format!("Failed to read body: {}", e)).into_response(),
-                };
-                
-                // Debug print
-                if let Ok(text) = String::from_utf8(bytes.to_vec()) {
-                    debug!("Upstream Response for Claude request: {}", text);
-                }
-
-                let gemini_resp: Value = match serde_json::from_slice(&bytes) {
-                    Ok(v) => v,
-                    Err(e) => return (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)).into_response(),
-                };
-
-                // 解包 response 字段（v1internal 格式）
-                let raw = gemini_resp.get("response").unwrap_or(&gemini_resp);
-
-                // 转换为 Gemini Response 结构
-                let gemini_response: crate::proxy::mappers::claude::models::GeminiResponse = match serde_json::from_value(raw.clone()) {
-                    Ok(r) => r,
-                    Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Convert error: {}", e)).into_response(),
-                };
-                
-                // Determine context limit based on model
-                let context_limit = crate::proxy::mappers::claude::utils::get_context_limit_for_model(&request_with_mapped.model);
-
-                // 转换
-                // [FIX #765] Pass session_id and model_name for signature caching
-                let s_id_owned = session_id.map(|s| s.to_string());
-                // 转换
-                let claude_response = match transform_response(
-                    &gemini_response,
-                    scaling_enabled,
-                    context_limit,
-                    s_id_owned,
-                    request_with_mapped.model.clone(),
-                    request_with_mapped.messages.len(), // [NEW v4.0.0] Pass message count for rewind detection
-                ) {
-                    Ok(r) => r,
-                    Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Transform error: {}", e)).into_response(),
-                };
-
-                // [Optimization] 记录闭环日志：消耗情况
-                let cache_info = if let Some(cached) = claude_response.usage.cache_read_input_tokens {
-                    format!(", Cached: {}", cached)
-                } else {
-                    String::new()
-                };
-                
-                tracing::info!(
-                    "[{}] Request finished. Model: {}, Tokens: In {}, Out {}{}", 
-                    trace_id, 
-                    request_with_mapped.model, 
-                    claude_response.usage.input_tokens, 
-                    claude_response.usage.output_tokens,
-                    cache_info
-                );
-
-                let masked_email = mask_email(&email);
-                return (StatusCode::OK, [("X-Account-Email", masked_email.as_str()), ("X-Mapped-Model", request_with_mapped.model.as_str())], Json(claude_response)).into_response();
             }
         }
         

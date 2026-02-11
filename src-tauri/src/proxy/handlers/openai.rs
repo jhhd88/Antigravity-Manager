@@ -469,6 +469,7 @@ pub async fn handle_chat_completions(
 
         // 处理特定错误并重试
         let status_code = status.as_u16();
+        let retry_after = response.headers().get("Retry-After").and_then(|h| h.to_str().ok()).map(|s| s.to_string());
         let error_text = response
             .text()
             .await
@@ -514,7 +515,7 @@ pub async fn handle_chat_completions(
                 .mark_rate_limited_async(
                     &email,
                     status_code,
-                    _retry_after.as_deref(),
+                    retry_after.as_deref(),
                     &error_text,
                     Some(&mapped_model),
                 )
@@ -1386,53 +1387,6 @@ pub async fn handle_completions(
                     }
                 }
             }
-
-            let gemini_resp: Value = match response.json().await {
-                Ok(json) => json,
-                Err(e) => {
-                    return (
-                        StatusCode::BAD_GATEWAY,
-                        [("X-Mapped-Model", mapped_model.as_str())],
-                        format!("Parse error: {}", e),
-                    )
-                        .into_response();
-                }
-            };
-
-            let chat_resp = transform_openai_response(&gemini_resp, Some("session-123"), 1);
-
-            // Map Chat Response -> Legacy Completions Response
-            let choices = chat_resp.choices.iter().map(|c| {
-                json!({
-                    "text": match &c.message.content {
-                        Some(crate::proxy::mappers::openai::OpenAIContent::String(s)) => s.clone(),
-                        _ => "".to_string()
-                    },
-                    "index": c.index,
-                    "logprobs": null,
-                    "finish_reason": c.finish_reason
-                })
-            }).collect::<Vec<_>>();
-
-            let legacy_resp = json!({
-                "id": chat_resp.id,
-                "object": "text_completion",
-                "created": chat_resp.created,
-                "model": chat_resp.model,
-                "choices": choices,
-                "usage": chat_resp.usage
-            });
-
-            let masked_email = mask_email(&email);
-            return (
-                StatusCode::OK,
-                [
-                    ("X-Account-Email", masked_email.as_str()),
-                    ("X-Mapped-Model", mapped_model.as_str()),
-                ],
-                Json(legacy_resp),
-            )
-                .into_response();
         }
 
         // Handle errors and retry

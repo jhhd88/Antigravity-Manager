@@ -368,6 +368,20 @@ response = client.chat.completions.create(
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v4.1.15 (2026-02-11)**:
+        -   **[Bug 修复] 批量修复 6 个用户报告问题**:
+            -   **#1797 白名单/黑名单删除失败**: 修复 IPC 参数名不匹配 (camelCase vs snake_case) 及 `clear` 操作传错参数 (`ip_pattern` → `id`)。
+            -   **#1795 代理池认证信息无法持久化**: 修复 `ProxyAuth.password` 必填 vs 可选不匹配导致反序列化失败；添加 URL 嵌入凭证提取。
+            -   **#1798 OpenCode 安装检测不到**: 增强子进程 PATH 继承；二进制存在但版本获取失败时报告为已安装。
+            -   **#1794 503 project_id 获取失败**: 主循环中 `fetch_project_id` 失败时使用 fallback 而非跳过账号。
+            -   **#1796 Opus 4.6 流式输出中断**: 提高 z.ai 默认超时至 600s；修复 SSE 错误注入格式。
+            -   **PR #1803 Warmup 403 标记**: warmup handler 收到 403 时正确标记账号为 forbidden。
+        -   **[安全加固] 代码审计清理**:
+            -   **IP 过滤器防伪造**: 本机模式优先使用 TCP ConnectInfo，不信任可伪造的 X-Forwarded-For header。
+            -   **白名单 fail-closed**: 白名单 DB 查询失败时返回 503 而非静默放行。
+            -   **死代码移除**: 移除 ~200 行不可达的非流式路径、废弃函数、注释代码。
+            -   **流式逻辑简化**: 消除 `actual_stream` 恒真布尔判断及相关冗余分支。
+        -   **[其他修复]**: Opus 4.6 标准化 ID、Web Search 降级开关 (#1482)、doc-test 断言修正、时间戳溢出保护。
     *   **v4.1.14 (2026-02-11)**:
         -   **[安全加固] 全面安全审计修复 (18 项)**:
             -   **配额保护绕过修复**: 重构 `normalize_to_standard_id` 为两阶段归一化，确保所有 ~40+ 模型别名（如 `claude-opus-4`、`claude-sonnet-4-5-20250929` 等）均纳入配额保护，彻底堵住通过变体名绕过的漏洞。

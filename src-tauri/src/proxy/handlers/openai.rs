@@ -10,7 +10,6 @@ use tracing::{debug, error, info}; // Import Engine trait for encode method
 use crate::proxy::mappers::openai::{
     transform_openai_request, transform_openai_response, OpenAIRequest,
 };
-// use crate::proxy::upstream::client::UpstreamClient; // 通过 state 获取
 use crate::proxy::debug_logger;
 use crate::proxy::server::AppState;
 use crate::proxy::upstream::client::mask_email;
@@ -38,7 +37,7 @@ pub async fn handle_chat_completions(
 
     // [NEW] 自动检测并转换 Responses 格式
     // 如果请求包含 instructions 或 input 但没有 messages，则认为是 Responses 格式
-    let is_responses_format = !body.get("messages").is_some()
+    let is_responses_format = body.get("messages").is_none()
         && (body.get("instructions").is_some() || body.get("input").is_some());
 
     if is_responses_format {
@@ -235,22 +234,15 @@ pub async fn handle_chat_completions(
 
         // 5. 发送请求
         let client_wants_stream = openai_req.stream;
-        let force_stream_internally = !client_wants_stream;
-        let actual_stream = client_wants_stream || force_stream_internally;
-
-        if force_stream_internally {
+        // [AUTO-CONVERSION] 始终使用 stream 模式以享受更宽松的配额
+        if !client_wants_stream {
             debug!(
                 "[{}] 🔄 Auto-converting non-stream request to stream for better quota",
                 trace_id
             );
         }
-
-        let method = if actual_stream {
-            "streamGenerateContent"
-        } else {
-            "generateContent"
-        };
-        let query_string = if actual_stream { Some("alt=sse") } else { None };
+        let method = "streamGenerateContent";
+        let query_string = Some("alt=sse");
 
         // [FIX #1522] Inject Anthropic Beta Headers for Claude models (OpenAI path)
         let mut extra_headers = std::collections::HashMap::new();
@@ -326,8 +318,7 @@ pub async fn handle_chat_completions(
         let upstream_url = response.url().to_string();
         let status = response.status();
         if status.is_success() {
-            // 5. 处理流式 vs 非流式
-            if actual_stream {
+            {
                 use axum::body::Body;
                 use axum::response::Response;
                 use futures::StreamExt;
@@ -474,33 +465,10 @@ pub async fn handle_chat_completions(
                     }
                 }
             }
-
-            let gemini_resp: Value = response
-                .json()
-                .await
-                .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
-
-            let openai_response =
-                transform_openai_response(&gemini_resp, Some(&session_id), message_count);
-            let masked_email = mask_email(&email);
-            return Ok((
-                StatusCode::OK,
-                [
-                    ("X-Account-Email", masked_email.as_str()),
-                    ("X-Mapped-Model", mapped_model.as_str()),
-                ],
-                Json(openai_response),
-            )
-                .into_response());
         }
 
         // 处理特定错误并重试
         let status_code = status.as_u16();
-        let _retry_after = response
-            .headers()
-            .get("Retry-After")
-            .and_then(|h| h.to_str().ok())
-            .map(|s| s.to_string());
         let error_text = response
             .text()
             .await
@@ -581,19 +549,6 @@ pub async fn handle_chat_completions(
             }
 
             // 2. [REMOVED] 不再特殊处理 QUOTA_EXHAUSTED，允许账号轮换
-            // if error_text.contains("QUOTA_EXHAUSTED") { ... }
-            /*
-            if error_text.contains("QUOTA_EXHAUSTED") {
-                error!(
-                    "OpenAI Quota exhausted (429) on account {} attempt {}/{}, stopping to protect pool.",
-                    email,
-                    attempt + 1,
-                    max_attempts
-                );
-                return Ok((status, [("X-Account-Email", email.as_str()), ("X-Mapped-Model", mapped_model.as_str())], error_text).into_response());
-            }
-            */
-
             // 3. 其他限流或服务器过载情况，轮换账号
             tracing::warn!(
                 "OpenAI Upstream {} on {} attempt {}/{}, rotating account",
@@ -1187,16 +1142,10 @@ pub async fn handle_completions(
                 .unwrap_or(0)
         );
 
-        // [AUTO-CONVERSION] For Legacy/Codex as well
+        // [AUTO-CONVERSION] 始终使用 stream 模式
         let client_wants_stream = openai_req.stream;
-        let force_stream_internally = !client_wants_stream;
-        let list_response = client_wants_stream || force_stream_internally;
-        let method = if list_response {
-            "streamGenerateContent"
-        } else {
-            "generateContent"
-        };
-        let query_string = if list_response { Some("alt=sse") } else { None };
+        let method = "streamGenerateContent";
+        let query_string = Some("alt=sse");
 
         let call_result = match upstream
             .call_v1_internal(
@@ -1227,7 +1176,7 @@ pub async fn handle_completions(
             // [智能限流] 请求成功，重置该账号的连续失败计数
             token_manager.mark_account_success(&email);
 
-            if list_response {
+            {
                 use axum::body::Body;
                 use axum::response::Response;
                 use futures::StreamExt;
@@ -1662,8 +1611,6 @@ pub async fn handle_images_generations(
         let token_manager = token_manager.clone();
         let final_prompt = final_prompt.clone();
         let image_config = image_config.clone(); // 使用解析后的完整配置
-        let _response_format = response_format.to_string();
-
         let model_to_use = "gemini-3-pro-image".to_string();
 
         tasks.push(tokio::spawn(async move {

@@ -77,24 +77,8 @@ pub fn resolve_request_config(
 
     // 检测是否有联网工具定义 (内置功能调用)
     let has_networking_tool = detects_networking_tool(tools);
-    // 检测是否包含非联网工具 (如 MCP 本地工具)
-    let _has_non_networking = contains_non_networking_tool(tools);
-
     // Strip -online suffix from original model if present (to detect networking intent)
     let is_online_suffix = original_model.ends_with("-online");
-
-    // High-quality grounding allowlist (Only for models known to support search and be relatively 'safe')
-    let _is_high_quality_model = mapped_model == "gemini-2.5-flash"
-        || mapped_model == "gemini-1.5-pro"
-        || mapped_model.starts_with("gemini-1.5-pro-")
-        || mapped_model.starts_with("gemini-2.5-flash-")
-        || mapped_model.starts_with("gemini-2.0-flash")
-        || mapped_model.starts_with("gemini-3-")
-        || mapped_model.contains("claude-3-5-sonnet")
-        || mapped_model.contains("claude-3-opus")
-        || mapped_model.contains("claude-sonnet")
-        || mapped_model.contains("claude-opus")
-        || mapped_model.contains("claude-4");
 
     // Determine if we should enable networking
     // [FIX] 禁用基于模型的自动联网逻辑，防止图像请求被联网搜索结果覆盖。
@@ -420,63 +404,6 @@ pub fn detects_networking_tool(tools: &Option<Vec<Value>>) -> bool {
 
             // 4. Gemini googleSearch 声明 (含 googleSearchRetrieval 变体)
             if tool.get("googleSearch").is_some() || tool.get("googleSearchRetrieval").is_some() {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// 探测是否包含非联网相关的本地函数工具
-pub fn contains_non_networking_tool(tools: &Option<Vec<Value>>) -> bool {
-    if let Some(list) = tools {
-        for tool in list {
-            let mut is_networking = false;
-
-            // 简单逻辑：如果它是一个函数声明且名字不是联网关键词，则视为非联网工具
-            if let Some(n) = tool.get("name").and_then(|v| v.as_str()) {
-                let keywords = [
-                    "web_search",
-                    "google_search",
-                    "web_search_20250305",
-                    "google_search_retrieval",
-                ];
-                if keywords.contains(&n) {
-                    is_networking = true;
-                }
-            } else if let Some(func) = tool.get("function") {
-                if let Some(n) = func.get("name").and_then(|v| v.as_str()) {
-                    let keywords = [
-                        "web_search",
-                        "google_search",
-                        "web_search_20250305",
-                        "google_search_retrieval",
-                    ];
-                    if keywords.contains(&n) {
-                        is_networking = true;
-                    }
-                }
-            } else if tool.get("googleSearch").is_some()
-                || tool.get("googleSearchRetrieval").is_some()
-            {
-                is_networking = true;
-            } else if tool.get("functionDeclarations").is_some() {
-                // 如果是 Gemini 风格的 functionDeclarations，进去看一眼
-                if let Some(decls) = tool.get("functionDeclarations").and_then(|v| v.as_array()) {
-                    for decl in decls {
-                        if let Some(n) = decl.get("name").and_then(|v| v.as_str()) {
-                            let keywords =
-                                ["web_search", "google_search", "google_search_retrieval"];
-                            if !keywords.contains(&n) {
-                                return true; // 发现本地函数
-                            }
-                        }
-                    }
-                }
-                is_networking = true; // 即使全是联网，外层也标记为联网
-            }
-
-            if !is_networking {
                 return true;
             }
         }

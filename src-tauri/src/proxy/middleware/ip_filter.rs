@@ -13,13 +13,16 @@ pub async fn ip_filter_middleware(
     request: Request,
     next: Next,
 ) -> Response {
-    // 提取客户端 IP
-    let client_ip = extract_client_ip(&request);
-    
+    // 读取安全配置
+    let security_config = state.security.read().await;
+
+    // [FIX-A] 根据部署模式选择 IP 提取策略：
+    // - allow_lan_access=true 表示可能在反代后面，信任 X-Forwarded-For
+    // - 否则优先使用 TCP 连接 IP，防止 header 伪造绕过
+    let trust_proxy_headers = security_config.allow_lan_access;
+    let client_ip = extract_client_ip(&request, trust_proxy_headers);
+
     if let Some(ip) = &client_ip {
-        // 读取安全配置
-        let security_config = state.security.read().await;
-        
         // 1. 检查白名单 (如果启用白名单模式,只允许白名单 IP)
         if security_config.security_monitor.whitelist.enabled {
             match security_db::is_ip_in_whitelist(ip) {
@@ -37,7 +40,12 @@ pub async fn ip_filter_middleware(
                     );
                 }
                 Err(e) => {
-                    tracing::error!("[IP Filter] Failed to check whitelist: {}", e);
+                    // [FIX-B] 白名单模式下 DB 错误 => fail-closed (503)
+                    tracing::error!("[IP Filter] Failed to check whitelist: {}, denying request (fail-closed)", e);
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "Security check temporarily unavailable. Please try again later.",
+                    ).into_response();
                 }
             }
         } else {
@@ -53,6 +61,7 @@ pub async fn ip_filter_middleware(
                     }
                     Err(e) => {
                         tracing::error!("[IP Filter] Failed to check whitelist: {}", e);
+                        // 优先模式下白名单查询失败不阻断，继续检查黑名单
                     }
                 }
             }
@@ -144,29 +153,56 @@ pub async fn ip_filter_middleware(
 }
 
 /// 从请求中提取客户端 IP
-fn extract_client_ip(request: &Request) -> Option<String> {
-    // 1. 优先从 X-Forwarded-For 提取 (取第一个 IP)
-    request
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
-        .or_else(|| {
-            // 2. 备选从 X-Real-IP 提取
-            request
-                .headers()
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
-        })
-        .or_else(|| {
-            // 3. 最后尝试从 ConnectInfo 获取 (TCP 连接 IP)
-            // 这可以解决本地开发/测试时没有代理头导致 IP 获取失败的问题
-            request
-                .extensions()
-                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-                .map(|info| info.0.ip().to_string())
-        })
+///
+/// [FIX-A] 安全 IP 提取策略：
+/// - `trust_proxy_headers=false`（默认本机模式）: 优先使用 TCP 连接 IP (ConnectInfo)，
+///   防止客户端伪造 X-Forwarded-For 绕过 IP 黑白名单。
+/// - `trust_proxy_headers=true`（LAN/反代模式）: 优先使用代理 header，
+///   因为此时 ConnectInfo 是反代 IP 而非真实客户端 IP。
+fn extract_client_ip(request: &Request, trust_proxy_headers: bool) -> Option<String> {
+    if trust_proxy_headers {
+        // 反代模式：优先信任代理 header
+        request
+            .headers()
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+            .or_else(|| {
+                request
+                    .headers()
+                    .get("x-real-ip")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string())
+            })
+            .or_else(|| {
+                // 回退到 TCP 连接 IP
+                request
+                    .extensions()
+                    .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                    .map(|info| info.0.ip().to_string())
+            })
+    } else {
+        // 本机模式：优先使用 TCP 连接 IP，不信任可伪造的 header
+        request
+            .extensions()
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .map(|info| info.0.ip().to_string())
+            .or_else(|| {
+                // ConnectInfo 不可用时回退到 header（如测试环境）
+                request
+                    .headers()
+                    .get("x-forwarded-for")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+            })
+            .or_else(|| {
+                request
+                    .headers()
+                    .get("x-real-ip")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string())
+            })
+    }
 }
 
 /// 创建被封禁的响应

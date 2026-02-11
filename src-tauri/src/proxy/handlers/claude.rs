@@ -377,10 +377,7 @@ pub async fn handle_messages(
     debug!("[{}] Full Claude Request JSON: {}", trace_id, serde_json::to_string_pretty(&request).unwrap_or_default());
     debug!("========== [{}] CLAUDE REQUEST DEBUG END ==========", trace_id);
 
-    // 1. 获取 会话 ID (已废弃基于内容的哈希，改用 TokenManager 内部的时间窗口锁定)
-    let _session_id: Option<&str> = None;
-
-    // 2. 获取 UpstreamClient
+    // 获取 UpstreamClient
     let upstream = state.upstream.clone();
     
     // 3. 准备闭包
@@ -662,9 +659,6 @@ pub async fn handle_messages(
 
         request_with_mapped.model = mapped_model.clone();
 
-        // 生成 Trace ID (简单用时间戳后缀)
-        // let _trace_id = format!("req_{}", chrono::Utc::now().timestamp_subsec_millis());
-
         let gemini_body = match transform_claude_request_in(&request_with_mapped, &project_id, retried_without_thinking) {
             Ok(b) => {
                 debug!("[{}] Transformed Gemini Body: {}", trace_id, serde_json::to_string_pretty(&b).unwrap_or_default());
@@ -704,18 +698,13 @@ pub async fn handle_messages(
             debug_logger::write_debug_payload(&debug_cfg, Some(&trace_id), "v1internal_request", &payload).await;
         }
         
-    // 4. 上游调用 - 自动转换逻辑
+    // 4. 上游调用 - 始终使用 stream 模式以享受更宽松的配额
     let client_wants_stream = request.stream;
-    // [AUTO-CONVERSION] 非 Stream 请求自动转换为 Stream 以享受更宽松的配额
-    let force_stream_internally = !client_wants_stream;
-    let actual_stream = client_wants_stream || force_stream_internally;
-    
-    if force_stream_internally {
+    if !client_wants_stream {
         info!("[{}] 🔄 Auto-converting non-stream request to stream for better quota", trace_id);
     }
-    
-    let method = if actual_stream { "streamGenerateContent" } else { "generateContent" };
-    let query = if actual_stream { Some("alt=sse") } else { None };
+    let method = "streamGenerateContent";
+    let query = Some("alt=sse");
         // [FIX #765/1522] Prepare Robust Beta Headers for Claude models
         let mut extra_headers = std::collections::HashMap::new();
         if mapped_model.to_lowercase().contains("claude") {
@@ -786,8 +775,8 @@ pub async fn handle_messages(
                 // Determine context limit based on model
                 let context_limit = crate::proxy::mappers::claude::utils::get_context_limit_for_model(&request_with_mapped.model);
 
-            // 处理流式响应
-            if actual_stream {
+            // 处理流式响应 (始终走 stream 路径)
+            {
                 let meta = json!({
                     "protocol": "anthropic",
                     "trace_id": trace_id,
@@ -1324,19 +1313,6 @@ pub async fn handle_count_tokens(
     }))
     .into_response()
 }
-
-// 移除已失效的简单单元测试，后续将补全完整的集成测试
-/*
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_handle_list_models() {
-        // handle_list_models 现在需要 AppState，此处跳过旧的单元测试
-    }
-}
-*/
 
 // ===== 后台任务检测辅助函数 =====
 

@@ -157,8 +157,8 @@ impl RateLimitTracker {
         // 尝试解析 ISO 8601 格式
         match chrono::DateTime::parse_from_rfc3339(reset_time_str) {
             Ok(dt) => {
-                let reset_time = SystemTime::UNIX_EPOCH + 
-                    std::time::Duration::from_secs(dt.timestamp() as u64);
+                let reset_time = SystemTime::UNIX_EPOCH +
+                    std::time::Duration::from_secs(dt.timestamp().max(0) as u64);
                 self.set_lockout_until(account_id, reset_time, reason, model);
                 true
             },

@@ -77,13 +77,7 @@ pub async fn handle_generate(
         .await;
     }
     let client_wants_stream = method == "streamGenerateContent";
-    // [AUTO-CONVERSION] 强制内部流式化
-    let force_stream_internally = !client_wants_stream;
-    let is_stream = client_wants_stream || force_stream_internally;
-
-    if force_stream_internally {
-        // debug!("[AutoConverter] Converting non-stream request to stream");
-    }
+    // [AUTO-CONVERSION] 始终使用 stream 模式
 
     // 2. 获取 UpstreamClient 和 TokenManager
     let upstream = state.upstream.clone();
@@ -178,13 +172,9 @@ pub async fn handle_generate(
             .await;
         }
 
-        // 5. 上游调用
-        let query_string = if is_stream { Some("alt=sse") } else { None };
-        let upstream_method = if is_stream {
-            "streamGenerateContent"
-        } else {
-            "generateContent"
-        };
+        // 5. 上游调用 (始终 stream)
+        let query_string = Some("alt=sse");
+        let upstream_method = "streamGenerateContent";
 
         // [FIX #1522] Inject Anthropic Beta Headers for Claude models
         let mut extra_headers = std::collections::HashMap::new();
@@ -257,8 +247,8 @@ pub async fn handle_generate(
         let upstream_url = response.url().to_string();
         let status = response.status();
         if status.is_success() {
-            // 6. 响应处理
-            if is_stream {
+            // 6. 响应处理 (始终走 stream 路径)
+            {
                 use axum::body::Body;
                 use axum::response::Response;
                 use bytes::{Bytes, BytesMut};
@@ -457,61 +447,6 @@ pub async fn handle_generate(
                     }
                 }
             }
-
-            let mut gemini_resp: Value = response
-                .json()
-                .await
-                .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
-
-            // [FIX #1522] Inject Tool ID into Non-streaming Response
-            crate::proxy::mappers::gemini::wrapper::inject_ids_to_response(
-                &mut gemini_resp,
-                &mapped_model,
-            );
-
-            // [FIX #765] Extract thoughtSignature from non-streaming response
-            let inner_val = if gemini_resp.get("response").is_some() {
-                gemini_resp.get("response")
-            } else {
-                Some(&gemini_resp)
-            };
-
-            if let Some(resp) = inner_val {
-                if let Some(candidates) = resp.get("candidates").and_then(|c| c.as_array()) {
-                    for cand in candidates {
-                        if let Some(parts) = cand
-                            .get("content")
-                            .and_then(|c| c.get("parts"))
-                            .and_then(|p| p.as_array())
-                        {
-                            for part in parts {
-                                if let Some(sig) =
-                                    part.get("thoughtSignature").and_then(|s| s.as_str())
-                                {
-                                    crate::proxy::SignatureCache::global().cache_session_signature(
-                                        &session_id,
-                                        sig.to_string(),
-                                        1,
-                                    );
-                                    debug!("[Gemini-Response] Cached signature (len: {}) for session: {}", sig.len(), session_id);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            let unwrapped = unwrap_response(&gemini_resp);
-            let masked = mask_email(&email);
-            return Ok((
-                StatusCode::OK,
-                [
-                    ("X-Account-Email", masked.as_str()),
-                    ("X-Mapped-Model", mapped_model.as_str()),
-                ],
-                Json(unwrapped),
-            )
-                .into_response());
         }
 
         // 处理错误并重试

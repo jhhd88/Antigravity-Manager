@@ -420,11 +420,9 @@ pub fn transform_openai_request(
         gen_config["candidateCount"] = json!(n);
     }
 
-    // [FIX] Gemini 3.0 模型使用 thinkingLevel (枚举) 替代 thinkingBudget (整数)
-    // 两者不能共存，发送错误参数会导致 400 INVALID_ARGUMENT
-    let uses_thinking_level = mapped_model_lower.contains("gemini-3")
-        || mapped_model_lower.contains("claude-opus-4-6")
-        || mapped_model_lower.contains("claude-opus-4.6");
+    // [FIX] 仅 Gemini 3.0 原生模型使用 thinkingLevel 枚举
+    // Claude 模型走 Gemini 端点但使用 thinkingBudget 整数
+    let uses_thinking_level = mapped_model_lower.contains("gemini-3");
 
     if actual_include_thinking {
         // [RESOLVE #1694] Check image thinking mode

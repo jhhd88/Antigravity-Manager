@@ -1749,9 +1749,9 @@ fn build_generation_config(
     // Gemini 3.0 系列和 Claude Opus 4.6 使用 thinkingLevel (枚举) 而非 thinkingBudget (整数)
     // 两者绝不能同时发送，否则返回 400 INVALID_ARGUMENT
     // 参考: https://help.apiyi.com/en/gemini-api-thinking-budget-level-error-fix-en.html
-    let uses_thinking_level = model_lower.contains("gemini-3")
-        || model_lower.contains("claude-opus-4-6")
-        || model_lower.contains("claude-opus-4.6");
+    // [FIX] 仅 Gemini 3.0 原生模型使用 thinkingLevel 枚举
+    // Claude 模型（包括 claude-opus-4-6-thinking）走 Gemini 端点但使用 thinkingBudget 整数
+    let uses_thinking_level = model_lower.contains("gemini-3");
 
     // Thinking 配置
     if is_thinking_enabled {

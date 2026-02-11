@@ -125,9 +125,9 @@ pub fn wrap_request(
             .unwrap();
 
         // [FIX] Gemini 3.0 使用 thinkingLevel 枚举，Gemini 2.5 使用 thinkingBudget 整数
-        let uses_thinking_level = lower_model.contains("gemini-3")
-            || lower_model.contains("claude-opus-4-6")
-            || lower_model.contains("claude-opus-4.6");
+        // [FIX] 仅 Gemini 3.0 原生模型使用 thinkingLevel 枚举
+        // Claude 模型走 Gemini 端点但使用 thinkingBudget 整数
+        let uses_thinking_level = lower_model.contains("gemini-3");
 
         // Auto-inject thinkingConfig if missing for known thinking models
         if gen_config.get("thinkingConfig").is_none() {

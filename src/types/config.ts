@@ -138,6 +138,7 @@ export interface AppConfig {
     quota_protection: QuotaProtectionConfig; // [NEW] 配额保护配置
     pinned_quota_models: PinnedQuotaModelsConfig; // [NEW] 配额关注列表
     circuit_breaker: CircuitBreakerConfig; // [NEW] 熔断器配置
+    cloudflared?: CloudflaredConfig;
     proxy: ProxyConfig;
 }
 

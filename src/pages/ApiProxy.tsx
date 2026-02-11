@@ -36,7 +36,7 @@ import DebouncedSlider from '../components/common/DebouncedSlider';
 import { listAccounts } from '../services/accountService';
 import CircuitBreaker from '../components/settings/CircuitBreaker';
 import AdvancedThinking from '../components/settings/AdvancedThinking';
-import { CircuitBreakerConfig } from '../types/config';
+import { CircuitBreakerConfig, CloudflaredConfig } from '../types/config';
 
 interface ProxyStatus {
     running: boolean;
@@ -203,9 +203,9 @@ export default function ApiProxy() {
         running: false,
     });
     const [cfLoading, setCfLoading] = useState(false);
-    const [cfMode, setCfMode] = useState<'quick' | 'auth'>('quick');
-    const [cfToken, setCfToken] = useState('');
-    const [cfUseHttp2, setCfUseHttp2] = useState(true); // 默认启用HTTP/2，更稳定
+    const cfMode = appConfig?.cloudflared?.mode ?? 'quick';
+    const cfToken = appConfig?.cloudflared?.token ?? '';
+    const cfUseHttp2 = appConfig?.cloudflared?.use_http2 ?? true;
 
     const zaiModelOptions = useMemo(() => {
         const unique = new Set(zaiAvailableModels);
@@ -312,10 +312,12 @@ export default function ApiProxy() {
                 };
                 const status = await invoke<typeof cfStatus>('cloudflared_start', { config });
                 setCfStatus(status);
+                updateCloudflaredConfig({ enabled: true });
                 showToast(t('proxy.cloudflared.started', { defaultValue: 'Tunnel started' }), 'success');
             } else {
                 const status = await invoke<typeof cfStatus>('cloudflared_stop');
                 setCfStatus(status);
+                updateCloudflaredConfig({ enabled: false });
                 showToast(t('proxy.cloudflared.stopped', { defaultValue: 'Tunnel stopped' }), 'success');
             }
         } catch (error) {
@@ -698,6 +700,23 @@ export default function ApiProxy() {
         const newConfig = {
             ...appConfig,
             circuit_breaker: newBreakerConfig
+        };
+        saveConfig(newConfig);
+    };
+
+    const updateCloudflaredConfig = (updates: Partial<CloudflaredConfig>) => {
+        if (!appConfig) return;
+        const current = appConfig.cloudflared;
+        const newConfig = {
+            ...appConfig,
+            cloudflared: {
+                enabled: current?.enabled ?? false,
+                mode: current?.mode ?? 'quick',
+                port: current?.port ?? (appConfig.proxy.port || 8045),
+                token: current?.token,
+                use_http2: current?.use_http2 ?? true,
+                ...updates,
+            },
         };
         saveConfig(newConfig);
     };
@@ -2061,7 +2080,7 @@ print(response.text)`;
                                                 {/* 隧道模式选择 */}
                                                 <div className="grid grid-cols-2 gap-3">
                                                     <button
-                                                        onClick={() => setCfMode('quick')}
+                                                        onClick={() => updateCloudflaredConfig({ mode: 'quick' })}
                                                         disabled={cfStatus.running}
                                                         className={cn(
                                                             "p-3 rounded-lg border-2 text-left transition-all",
@@ -2079,7 +2098,7 @@ print(response.text)`;
                                                         </p>
                                                     </button>
                                                     <button
-                                                        onClick={() => setCfMode('auth')}
+                                                        onClick={() => updateCloudflaredConfig({ mode: 'auth' })}
                                                         disabled={cfStatus.running}
                                                         className={cn(
                                                             "p-3 rounded-lg border-2 text-left transition-all",
@@ -2107,7 +2126,7 @@ print(response.text)`;
                                                         <input
                                                             type="password"
                                                             value={cfToken}
-                                                            onChange={(e) => setCfToken(e.target.value)}
+                                                            onChange={(e) => updateCloudflaredConfig({ token: e.target.value })}
                                                             disabled={cfStatus.running}
                                                             placeholder="eyJhIjoiNj..."
                                                             className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-base-200 text-sm font-mono disabled:opacity-60"
@@ -2129,7 +2148,7 @@ print(response.text)`;
                                                         type="checkbox"
                                                         className="toggle toggle-sm"
                                                         checked={cfUseHttp2}
-                                                        onChange={(e) => setCfUseHttp2(e.target.checked)}
+                                                        onChange={(e) => updateCloudflaredConfig({ use_http2: e.target.checked })}
                                                         disabled={cfStatus.running}
                                                     />
                                                 </div>

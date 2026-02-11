@@ -459,7 +459,7 @@ pub fn transform_claude_request_in(
     let mut is_thinking_enabled = claude_req
         .thinking
         .as_ref()
-        .map(|t| t.type_ == "enabled")
+        .map(|t| t.type_ == "enabled" || t.type_ == "adaptive")
         .unwrap_or_else(|| {
             // [Claude Code v2.0.67+] Default thinking enabled for Opus 4.5
             // If no thinking config is provided, enable by default for Opus models
